@@ -1,0 +1,38 @@
+[package]
+name = "pgcrate"
+version = "0.1.0"
+edition = "2021"
+description = "PostgreSQL companion for teams not using Rails or Django. Migrations, introspection, diffing, and more."
+license = "MIT"
+readme = "README.md"
+homepage = "https://pgcrate.com"
+repository = "https://github.com/jackschultz/pgcrate"
+keywords = ["postgres", "postgresql", "migrations", "database", "cli"]
+categories = ["database", "command-line-utilities"]
+exclude = ["target/", "website/"]
+
+[dependencies]
+bytes = "1"
+clap = { version = "4", features = ["derive"] }
+dialoguer = "0.11"
+tokio-postgres = "0.7"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process"] }
+colored = "2"
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+hex = "0.4"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+dotenvy = "0.15"
+anyhow = "1"
+futures-util = "0.3"
+url = "2"
+sqlparser = "0.58"
+walkdir = "2"
+csv = "1.3"
+
+[dev-dependencies]
+tempfile = "3"
+serde_json = "1"

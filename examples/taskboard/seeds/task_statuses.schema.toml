@@ -1,0 +1,7 @@
+primary_key = ["code"]
+
+[columns]
+code = "text"
+label = "text"
+sort_order = "integer"
+is_terminal = "boolean"

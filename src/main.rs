@@ -1,0 +1,1169 @@
+use anyhow::{Context, Result};
+use clap::{error::ErrorKind, Args, Parser, Subcommand};
+use std::path::PathBuf;
+
+mod anonymize;
+mod commands;
+mod config;
+mod describe;
+mod diff;
+mod doctor;
+mod help;
+mod introspect;
+mod migrations;
+mod model;
+mod output;
+mod seed;
+mod snapshot;
+mod sql;
+use config::Config;
+use output::{HelpResponse, JsonError, LlmHelpResponse, Output, VersionResponse};
+
+/// Embedded LLM help content (compiled into binary)
+const LLM_HELP: &str = include_str!("../llms.txt");
+
+/// Version from Cargo.toml
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Commands that support JSON output mode
+/// Note: For commands with subcommands (migrate, snapshot), JSON support varies by subcommand
+const JSON_SUPPORTED_COMMANDS: &[&str] = &[
+    "diff",     // schema diff
+    "doctor",   // health checks
+    "snapshot", // list, info
+    "migrate",  // status subcommand
+];
+
+#[derive(Parser)]
+#[command(name = "pgcrate")]
+#[command(version = VERSION)]
+#[command(about = "Postgres migration tool", long_about = None)]
+#[command(
+    after_help = "For AI agents and LLMs: Use --help-llm for structured, detailed information suitable for programmatic usage."
+)]
+#[command(subcommand_required = true, arg_required_else_help = true)]
+struct Cli {
+    /// Show detailed help for AI agents and LLMs (structured output)
+    #[arg(long = "help-llm", global = true)]
+    help_llm: bool,
+
+    /// Database URL (overrides DATABASE_URL env var and config file)
+    #[arg(short = 'd', long = "database-url", global = true)]
+    database_url: Option<String>,
+
+    /// Path to config file (default: ./pgcrate.toml)
+    #[arg(long = "config", global = true)]
+    config_path: Option<PathBuf>,
+
+    /// Minimal output (errors only)
+    #[arg(long, global = true)]
+    quiet: bool,
+
+    /// Show SQL being executed
+    #[arg(long, global = true)]
+    verbose: bool,
+
+    /// Output as JSON instead of human-readable text
+    #[arg(long, global = true)]
+    json: bool,
+
+    /// Path to anonymize rules file (default: ./pgcrate.anonymize.toml)
+    #[arg(long, global = true)]
+    anonymize_config: Option<PathBuf>,
+
+    /// Path to snapshot profiles file (default: ./pgcrate.snapshot.toml)
+    #[arg(long, global = true)]
+    snapshot_config: Option<PathBuf>,
+
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Migration commands (up, down, status, new, baseline)
+    Migrate {
+        #[command(subcommand)]
+        command: MigrateCommands,
+    },
+    /// Model commands (run, compile)
+    Model {
+        #[command(subcommand)]
+        command: ModelCommands,
+    },
+
+    /// Initialize a new pgcrate project
+    Init {
+        /// Accept all defaults without prompting
+        #[arg(short = 'y', long)]
+        yes: bool,
+        /// Show what would be created without creating
+        #[arg(long)]
+        dry_run: bool,
+        /// Overwrite existing pgcrate.toml
+        #[arg(long)]
+        force: bool,
+        /// Minimal output
+        #[arg(short = 'q', long)]
+        quiet: bool,
+        /// Migrations directory
+        #[arg(long, default_value = "db/migrations")]
+        migrations_dir: String,
+        /// Enable models
+        #[arg(long)]
+        models: bool,
+        /// Models directory (implies --models)
+        #[arg(long, default_value = "models")]
+        models_dir: String,
+        /// Enable seeds
+        #[arg(long)]
+        seeds: bool,
+        /// Seeds directory (implies --seeds)
+        #[arg(long, default_value = "seeds")]
+        seeds_dir: String,
+        /// Schema for seed tables
+        #[arg(long, default_value = "seeds")]
+        seeds_schema: String,
+    },
+    /// Database management commands
+    Db {
+        #[command(subcommand)]
+        command: DbCommands,
+    },
+    /// Reset database to clean state
+    Reset {
+        /// Confirm you want to reset the database
+        #[arg(long)]
+        yes: bool,
+        /// Full reset: drop and recreate database (instead of just rolling back migrations)
+        #[arg(long)]
+        full: bool,
+    },
+    /// Generate migration files from existing database schema
+    Generate {
+        /// Split mode: "none" (single file), "schema", or "table"
+        #[arg(long, value_name = "MODE")]
+        split_by: Option<String>,
+        /// Output directory (default: migrations directory)
+        #[arg(long, short = 'o', value_name = "DIR")]
+        output: Option<PathBuf>,
+        /// Show what would be generated without writing files
+        #[arg(long)]
+        dry_run: bool,
+        /// Include only these schemas (can be specified multiple times)
+        #[arg(long = "schema", value_name = "SCHEMA")]
+        schemas: Vec<String>,
+        /// Exclude these schemas (can be specified multiple times)
+        #[arg(long = "exclude-schema", value_name = "SCHEMA")]
+        exclude_schemas: Vec<String>,
+    },
+    /// Compare two database schemas and show differences
+    Diff {
+        /// Source database URL (default: DATABASE_URL)
+        #[arg(long)]
+        from: Option<String>,
+        /// Target database URL (required)
+        #[arg(long)]
+        to: String,
+        /// Only compare these schemas (can be specified multiple times)
+        #[arg(long = "schema", value_name = "SCHEMA")]
+        schemas: Vec<String>,
+        /// Exclude these schemas (can be specified multiple times)
+        #[arg(
+            long = "exclude-schema",
+            value_name = "SCHEMA",
+            conflicts_with = "schemas"
+        )]
+        exclude_schemas: Vec<String>,
+    },
+    /// Show detailed information about a table
+    Describe {
+        /// Table to describe (schema.name or just name)
+        object: String,
+        /// Show objects that depend on this table
+        #[arg(long, conflicts_with = "dependencies")]
+        dependents: bool,
+        /// Show objects this table depends on
+        #[arg(long, conflicts_with = "dependents")]
+        dependencies: bool,
+        /// Skip table statistics
+        #[arg(long)]
+        no_stats: bool,
+    },
+    /// One-command health check (connection, schema, migrations, seeds, config)
+    Doctor {
+        /// Treat warnings as errors (exit 1 on warnings)
+        #[arg(long)]
+        strict: bool,
+    },
+    /// Save and restore database state
+    Snapshot {
+        #[command(subcommand)]
+        command: SnapshotCommands,
+    },
+    /// Anonymize data for safe extraction
+    Anonymize {
+        #[command(subcommand)]
+        command: AnonymizeCommands,
+    },
+    /// Load seed data from CSV or SQL files
+    Seed {
+        #[command(subcommand)]
+        command: SeedCommands,
+    },
+    /// Bootstrap a new environment with anonymized data from a source
+    Bootstrap {
+        /// Source database URL to pull data from
+        #[arg(long, required = true)]
+        from: String,
+        /// Show what would happen without making changes
+        #[arg(long)]
+        dry_run: bool,
+        /// Confirm you want to bootstrap (recreates local database if it exists)
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Inspect installed PostgreSQL extensions
+    Extension {
+        #[command(subcommand)]
+        command: ExtensionCommands,
+    },
+    /// Inspect database roles and permissions
+    Role {
+        #[command(subcommand)]
+        command: RoleCommands,
+    },
+    /// Show grants/permissions on database objects
+    Grants {
+        /// Table to show grants for (schema.table)
+        object: Option<String>,
+        /// Show all grants in a schema
+        #[arg(long)]
+        schema: Option<String>,
+        /// Show what a specific role can access
+        #[arg(long)]
+        role: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ExtensionCommands {
+    /// List installed extensions
+    List {
+        /// Show available but not installed extensions
+        #[arg(long)]
+        available: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum RoleCommands {
+    /// List all roles
+    List {
+        /// Show only login roles (users)
+        #[arg(long)]
+        users: bool,
+        /// Show only non-login roles (groups)
+        #[arg(long)]
+        groups: bool,
+    },
+    /// Show detailed info about a role
+    Describe {
+        /// Role name
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum MigrateCommands {
+    /// Run pending migrations
+    Up {
+        /// Show what would run without running
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Roll back applied migrations
+    Down {
+        /// Number of migrations to roll back (required)
+        #[arg(long, required = true)]
+        steps: usize,
+        /// Confirm you want to run down migrations
+        #[arg(long)]
+        yes: bool,
+        /// Show what would run without running
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Show migration status
+    Status,
+    /// Create a new migration file
+    New {
+        /// Migration name (e.g., create_users)
+        name: String,
+        /// Also create empty .down.sql file
+        #[arg(long)]
+        with_down: bool,
+    },
+    /// Mark migrations as applied without running them (for brownfield adoption)
+    Baseline {
+        /// Baseline all migration files
+        #[arg(long, conflicts_with = "version")]
+        all: bool,
+        /// Baseline up to this version prefix (inclusive)
+        #[arg(value_name = "VERSION")]
+        version: Option<String>,
+        /// Required confirmation flag
+        #[arg(long)]
+        yes: bool,
+        /// Show what would be baselined without making changes
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+/// Shared selection arguments for model commands
+#[derive(Args, Clone)]
+struct SelectionArgs {
+    /// Select models by name or selector (can repeat). Examples:
+    /// analytics.users, tag:daily, deps:analytics.orders, downstream:staging.raw, tree:analytics.orders
+    #[arg(long, short = 's')]
+    select: Vec<String>,
+
+    /// Exclude models by name or selector (can repeat)
+    #[arg(long, short = 'e')]
+    exclude: Vec<String>,
+}
+
+#[derive(Subcommand)]
+enum ModelCommands {
+    /// Execute models in DAG order
+    Run {
+        #[command(flatten)]
+        selection: SelectionArgs,
+        /// Show execution plan without running
+        #[arg(long)]
+        dry_run: bool,
+        /// Force full refresh for incremental models (drop and recreate)
+        #[arg(long)]
+        full_refresh: bool,
+    },
+    /// Compile models to target/compiled/
+    Compile {
+        #[command(flatten)]
+        selection: SelectionArgs,
+    },
+    /// Run data tests defined in model headers
+    Test {
+        #[command(flatten)]
+        selection: SelectionArgs,
+    },
+    /// Generate markdown documentation
+    Docs {
+        #[command(flatten)]
+        selection: SelectionArgs,
+    },
+    /// Show model dependency graph
+    Graph {
+        #[command(flatten)]
+        selection: SelectionArgs,
+        /// Output format: ascii (default), dot, json, mermaid
+        #[arg(long, default_value = "ascii")]
+        format: String,
+    },
+    /// Lint models for dependency and qualification issues
+    Lint {
+        #[command(subcommand)]
+        command: LintCommands,
+    },
+    /// Run all lints (deps + qualify)
+    Check {
+        #[command(flatten)]
+        selection: SelectionArgs,
+    },
+    /// Initialize models directory structure
+    Init {
+        /// Include example model
+        #[arg(long)]
+        example: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum LintCommands {
+    /// Check declared deps match inferred deps from SQL
+    Deps {
+        #[command(flatten)]
+        selection: SelectionArgs,
+        /// Auto-fix by rewriting deps line
+        #[arg(long)]
+        fix: bool,
+    },
+    /// Check for unqualified table references
+    Qualify {
+        #[command(flatten)]
+        selection: SelectionArgs,
+        /// Auto-fix by qualifying references
+        #[arg(long)]
+        fix: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum DbCommands {
+    /// Create the database specified in DATABASE_URL
+    Create {
+        /// Database name (overrides DATABASE_URL)
+        name: Option<String>,
+    },
+    /// Drop the database specified in DATABASE_URL
+    Drop {
+        /// Database name (overrides DATABASE_URL)
+        name: Option<String>,
+        /// Confirm you want to drop the database
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum SnapshotCommands {
+    /// Save current database state to a snapshot
+    Save {
+        /// Snapshot name (alphanumeric, hyphens, underscores, max 64 chars)
+        name: String,
+        /// Description of the snapshot
+        #[arg(short, long)]
+        message: Option<String>,
+        /// Snapshot profile to use (from pgcrate.snapshot.toml)
+        #[arg(long)]
+        profile: Option<String>,
+        /// Dump format: 'custom' (default, binary) or 'plain' (readable SQL)
+        #[arg(long)]
+        format: Option<String>,
+        /// Omit ownership (OWNER TO) statements from dump
+        #[arg(long)]
+        no_owner: bool,
+        /// Omit privilege (GRANT/REVOKE) statements from dump
+        #[arg(long)]
+        no_privileges: bool,
+        /// Show what would be saved without creating a snapshot
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Restore database from a snapshot (destructive)
+    Restore {
+        /// Snapshot name to restore
+        name: String,
+        /// Required confirmation flag
+        #[arg(long)]
+        yes: bool,
+        /// Show what would happen without making changes
+        #[arg(long)]
+        dry_run: bool,
+        /// Target database URL (defaults to DATABASE_URL)
+        #[arg(long)]
+        to: Option<String>,
+        /// Skip role pre-flight check and restore without ownership
+        #[arg(long)]
+        no_owner: bool,
+    },
+    /// List all snapshots
+    List,
+    /// Show detailed information about a snapshot
+    Info {
+        /// Snapshot name
+        name: String,
+    },
+    /// Delete a snapshot
+    Delete {
+        /// Snapshot name to delete
+        name: String,
+        /// Skip confirmation prompt
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum AnonymizeCommands {
+    /// Install anonymization functions
+    Setup,
+    /// Dump anonymized data to file or stdout
+    Dump {
+        /// Anonymization seed (overrides env and file)
+        #[arg(long)]
+        seed: Option<String>,
+        /// Output file path (default: stdout)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Preview what would be anonymized without writing output
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum SeedCommands {
+    /// Load seed data into database
+    Run {
+        /// Specific seeds to run (by name, without extension)
+        seeds: Vec<String>,
+        /// Show what would be loaded without loading
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// List available seed files
+    List,
+    /// Validate seed files without loading
+    Validate {
+        /// Specific seeds to validate (by name, without extension)
+        seeds: Vec<String>,
+    },
+    /// Compare seed files to database state
+    Diff {
+        /// Specific seeds to compare (by name, without extension)
+        seeds: Vec<String>,
+    },
+}
+
+impl Commands {
+    /// Get the command name as a string for JSON support checking
+    fn name(&self) -> &'static str {
+        match self {
+            Commands::Migrate { .. } => "migrate",
+            Commands::Model { .. } => "model",
+            Commands::Init { .. } => "init",
+            Commands::Db { .. } => "db",
+            Commands::Reset { .. } => "reset",
+            Commands::Generate { .. } => "generate",
+            Commands::Diff { .. } => "diff",
+            Commands::Describe { .. } => "describe",
+            Commands::Doctor { .. } => "doctor",
+            Commands::Snapshot { .. } => "snapshot",
+            Commands::Anonymize { .. } => "anonymize",
+            Commands::Seed { .. } => "seed",
+            Commands::Bootstrap { .. } => "bootstrap",
+            Commands::Extension { .. } => "extension",
+            Commands::Role { .. } => "role",
+            Commands::Grants { .. } => "grants",
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    // Load .env file if present (before parsing CLI so env vars are available)
+    let _ = dotenvy::dotenv();
+
+    // Check for --json flag early (before full parsing) for error handling
+    let json_mode = std::env::args().any(|arg| arg == "--json");
+
+    // Handle --help-llm early (before clap parsing fails due to missing subcommand)
+    // This is a special case because --help-llm should work without a subcommand
+    if std::env::args().any(|arg| arg == "--help-llm") {
+        if json_mode {
+            LlmHelpResponse::new(LLM_HELP.to_string()).print();
+        } else {
+            print!("{}", LLM_HELP);
+        }
+        std::process::exit(0);
+    }
+
+    // Use try_parse to handle clap errors in JSON mode
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(e) => {
+            // Handle meta UX flags (--help, --version) in JSON mode
+            if json_mode {
+                match e.kind() {
+                    ErrorKind::DisplayHelp => {
+                        // --help in JSON mode: return success payload
+                        HelpResponse::new(e.to_string()).print();
+                        std::process::exit(0);
+                    }
+                    ErrorKind::DisplayVersion => {
+                        // --version in JSON mode: return success payload
+                        VersionResponse::new(VERSION.to_string()).print();
+                        std::process::exit(0);
+                    }
+                    _ => {
+                        // Other errors in JSON mode: usage error
+                        JsonError::new(e.to_string()).print();
+                        std::process::exit(2);
+                    }
+                }
+            } else {
+                // Human mode: let clap print its formatted output
+                e.exit();
+            }
+        }
+    };
+
+    let output = Output::new(cli.json, cli.quiet, cli.verbose);
+
+    // Gate unsupported commands in JSON mode
+    if cli.json {
+        let cmd_name = cli.command.name();
+        if !JSON_SUPPORTED_COMMANDS.contains(&cmd_name) {
+            JsonError::new(format!("--json not supported for '{}' yet", cmd_name)).print();
+            std::process::exit(1);
+        }
+    }
+
+    if let Err(e) = run(cli, &output).await {
+        if json_mode {
+            // JSON mode: output structured error to stdout
+            // Only include details if source error is non-empty
+            let details = e.source().map(|s| s.to_string()).filter(|s| !s.is_empty());
+            let json_err = match details {
+                Some(d) => JsonError::with_details(e.to_string(), d),
+                None => JsonError::new(e.to_string()),
+            };
+            json_err.print();
+            std::process::exit(1);
+        } else {
+            // Human mode: error to stderr
+            eprintln!("Error: {e:?}");
+            std::process::exit(1);
+        }
+    }
+}
+
+async fn run(cli: Cli, output: &Output) -> Result<()> {
+    match cli.command {
+        Commands::Migrate { command } => {
+            // Handle migrate subcommands
+            match command {
+                MigrateCommands::New { name, with_down } => {
+                    let config = Config::load(cli.config_path.as_deref())
+                        .context("Failed to load configuration")?;
+                    commands::new_migration(&name, &config, with_down)?;
+                }
+                MigrateCommands::Up { dry_run } => {
+                    let config = Config::load(cli.config_path.as_deref())
+                        .context("Failed to load configuration")?;
+                    let database_url = config
+                        .get_database_url(cli.database_url.as_deref())
+                        .context("DATABASE_URL not set")?;
+                    commands::up(&database_url, &config, cli.quiet, cli.verbose, dry_run).await?;
+                }
+                MigrateCommands::Down {
+                    steps,
+                    yes,
+                    dry_run,
+                } => {
+                    let config = Config::load(cli.config_path.as_deref())
+                        .context("Failed to load configuration")?;
+                    let database_url = config
+                        .get_database_url(cli.database_url.as_deref())
+                        .context("DATABASE_URL not set")?;
+                    commands::down(
+                        &database_url,
+                        &config,
+                        cli.quiet,
+                        cli.verbose,
+                        steps,
+                        yes,
+                        dry_run,
+                    )
+                    .await?;
+                }
+                MigrateCommands::Status => {
+                    let config = Config::load(cli.config_path.as_deref())
+                        .context("Failed to load configuration")?;
+                    let database_url = config
+                        .get_database_url(cli.database_url.as_deref())
+                        .context("DATABASE_URL not set")?;
+                    commands::status(&database_url, &config, output).await?;
+                }
+                MigrateCommands::Baseline {
+                    all,
+                    version,
+                    yes,
+                    dry_run,
+                } => {
+                    let config = Config::load(cli.config_path.as_deref())
+                        .context("Failed to load configuration")?;
+                    let database_url = config
+                        .get_database_url(cli.database_url.as_deref())
+                        .context("DATABASE_URL not set")?;
+                    commands::baseline(
+                        &database_url,
+                        &config,
+                        cli.quiet,
+                        cli.verbose,
+                        all,
+                        version.as_deref(),
+                        yes,
+                        dry_run,
+                    )
+                    .await?;
+                }
+            }
+        }
+        Commands::Model { command } => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let cwd = std::env::current_dir().context("get current directory")?;
+            match command {
+                ModelCommands::Compile { selection } => {
+                    commands::model::compile(
+                        &cwd,
+                        &config,
+                        &selection.select,
+                        &selection.exclude,
+                        cli.quiet,
+                    )?;
+                }
+                ModelCommands::Run {
+                    selection,
+                    dry_run,
+                    full_refresh,
+                } => {
+                    let database_url = config
+                        .get_database_url(cli.database_url.as_deref())
+                        .context("DATABASE_URL not set")?;
+                    commands::model::run(
+                        &cwd,
+                        &config,
+                        &database_url,
+                        &selection.select,
+                        &selection.exclude,
+                        dry_run,
+                        full_refresh,
+                        cli.quiet,
+                    )
+                    .await?;
+                }
+                ModelCommands::Test { selection } => {
+                    let database_url = config
+                        .get_database_url(cli.database_url.as_deref())
+                        .context("DATABASE_URL not set")?;
+                    let exit_code = commands::model::test(
+                        &cwd,
+                        &config,
+                        &database_url,
+                        &selection.select,
+                        &selection.exclude,
+                        cli.quiet,
+                    )
+                    .await?;
+                    if exit_code != 0 {
+                        std::process::exit(exit_code);
+                    }
+                }
+                ModelCommands::Docs { selection } => {
+                    commands::model::docs(
+                        &cwd,
+                        &config,
+                        &selection.select,
+                        &selection.exclude,
+                        cli.quiet,
+                    )?;
+                }
+                ModelCommands::Graph { selection, format } => {
+                    commands::model::graph(
+                        &cwd,
+                        &config,
+                        &selection.select,
+                        &selection.exclude,
+                        &format,
+                        cli.quiet,
+                    )?;
+                }
+                ModelCommands::Lint { command } => {
+                    let exit_code = match command {
+                        LintCommands::Deps { selection, fix } => commands::model::lint_deps(
+                            &cwd,
+                            &config,
+                            &selection.select,
+                            &selection.exclude,
+                            fix,
+                            cli.quiet,
+                        )?,
+                        LintCommands::Qualify { selection, fix } => commands::model::lint_qualify(
+                            &cwd,
+                            &config,
+                            &selection.select,
+                            &selection.exclude,
+                            fix,
+                            cli.quiet,
+                        )?,
+                    };
+                    if exit_code != 0 {
+                        std::process::exit(exit_code);
+                    }
+                }
+                ModelCommands::Check { selection } => {
+                    let exit_code = commands::model::check(
+                        &cwd,
+                        &config,
+                        &selection.select,
+                        &selection.exclude,
+                        cli.quiet,
+                    )?;
+                    if exit_code != 0 {
+                        std::process::exit(exit_code);
+                    }
+                }
+                ModelCommands::Init { example } => {
+                    commands::model::init(&cwd, example, cli.quiet)?;
+                }
+            }
+        }
+        Commands::Init {
+            yes,
+            dry_run,
+            force,
+            quiet,
+            migrations_dir,
+            models,
+            models_dir,
+            seeds,
+            seeds_dir,
+            seeds_schema,
+        } => {
+            commands::init(
+                yes,
+                dry_run,
+                force,
+                quiet,
+                &migrations_dir,
+                models,
+                &models_dir,
+                seeds,
+                &seeds_dir,
+                &seeds_schema,
+            )?;
+        }
+        Commands::Doctor { strict } => {
+            let exit_code = commands::doctor(
+                cli.database_url.as_deref(),
+                cli.config_path.as_deref(),
+                cli.quiet,
+                cli.json,
+                cli.verbose,
+                strict,
+            )
+            .await?;
+            if exit_code != 0 {
+                std::process::exit(exit_code);
+            }
+        }
+        Commands::Db { command } => {
+            // db commands need database URL but not config
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let database_url = config
+                .get_database_url(cli.database_url.as_deref())
+                .context("DATABASE_URL not set. Use -d flag, set DATABASE_URL env var, or add to pgcrate.toml")?;
+
+            match command {
+                DbCommands::Create { name } => {
+                    commands::db_create(&database_url, name.as_deref(), &config, cli.quiet).await?;
+                }
+                DbCommands::Drop { name, yes } => {
+                    commands::db_drop(&database_url, name.as_deref(), &config, cli.quiet, yes)
+                        .await?;
+                }
+            }
+        }
+        Commands::Snapshot { command } => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let database_url = config
+                .get_database_url(cli.database_url.as_deref())
+                .context("DATABASE_URL not set. Use -d flag, set DATABASE_URL env var, or add to pgcrate.toml")?;
+
+            match command {
+                SnapshotCommands::Save {
+                    name,
+                    message,
+                    profile,
+                    format,
+                    no_owner,
+                    no_privileges,
+                    dry_run,
+                } => {
+                    let format_str = format
+                        .as_deref()
+                        .or_else(|| {
+                            config
+                                .snapshot
+                                .as_ref()
+                                .and_then(|s| s.default_format.as_deref())
+                        })
+                        .unwrap_or("custom");
+                    commands::snapshot_save(
+                        &database_url,
+                        &name,
+                        message.as_deref(),
+                        profile.as_deref(),
+                        cli.snapshot_config.as_deref(),
+                        format_str,
+                        no_owner,
+                        no_privileges,
+                        &config,
+                        cli.quiet,
+                        cli.verbose,
+                        dry_run,
+                    )
+                    .await?;
+                }
+                SnapshotCommands::Restore {
+                    name,
+                    yes,
+                    dry_run,
+                    to,
+                    no_owner,
+                } => {
+                    let target_url = to.as_deref().unwrap_or(&database_url);
+                    commands::snapshot_restore(
+                        target_url,
+                        &name,
+                        &config,
+                        cli.quiet,
+                        cli.verbose,
+                        yes,
+                        dry_run,
+                        no_owner,
+                    )
+                    .await?;
+                }
+                SnapshotCommands::List => {
+                    commands::snapshot_list(&config, cli.quiet, cli.json)?;
+                }
+                SnapshotCommands::Info { name } => {
+                    commands::snapshot_info(&name, &config, cli.quiet, cli.json)?;
+                }
+                SnapshotCommands::Delete { name, yes } => {
+                    commands::snapshot_delete(&name, &config, cli.quiet, yes)?;
+                }
+            }
+        }
+        Commands::Reset { yes, full } => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let database_url = config
+                .get_database_url(cli.database_url.as_deref())
+                .context("DATABASE_URL not set. Use -d flag, set DATABASE_URL env var, or add to pgcrate.toml")?;
+
+            commands::reset(&database_url, &config, cli.quiet, cli.verbose, yes, full).await?;
+        }
+        Commands::Anonymize { command } => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let database_url = config
+                .get_database_url(cli.database_url.as_deref())
+                .context("DATABASE_URL not set. Use -d flag, set DATABASE_URL env var, or add to pgcrate.toml")?;
+
+            match command {
+                AnonymizeCommands::Setup => {
+                    commands::anonymize_setup(&database_url, cli.quiet, cli.verbose).await?;
+                }
+                AnonymizeCommands::Dump {
+                    seed,
+                    output: out,
+                    dry_run,
+                } => {
+                    commands::anonymize_dump(
+                        &database_url,
+                        &config,
+                        cli.anonymize_config.as_deref(),
+                        seed.as_deref(),
+                        out.as_deref(),
+                        dry_run,
+                        cli.quiet,
+                        cli.verbose,
+                    )
+                    .await?;
+                }
+            }
+        }
+        Commands::Seed { command } => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+
+            match command {
+                SeedCommands::Run { seeds, dry_run } => {
+                    // dry_run doesn't need database connection
+                    let database_url = if dry_run {
+                        String::new()
+                    } else {
+                        config
+                            .get_database_url(cli.database_url.as_deref())
+                            .context("DATABASE_URL not set. Use -d flag, set DATABASE_URL env var, or add to pgcrate.toml")?
+                    };
+                    commands::seed_run(&database_url, &config, seeds, dry_run, cli.quiet).await?;
+                }
+                SeedCommands::List => {
+                    commands::seed_list(&config, cli.quiet)?;
+                }
+                SeedCommands::Validate { seeds } => {
+                    // DATABASE_URL is optional for validate - it only validates files
+                    // If provided, it also checks database connection and schema existence
+                    let database_url = config
+                        .get_database_url(cli.database_url.as_deref())
+                        .unwrap_or_default();
+                    commands::seed_validate(&database_url, &config, seeds, cli.quiet).await?;
+                }
+                SeedCommands::Diff { seeds } => {
+                    let database_url = config
+                        .get_database_url(cli.database_url.as_deref())
+                        .context("DATABASE_URL not set. Use -d flag, set DATABASE_URL env var, or add to pgcrate.toml")?;
+                    commands::seed_diff(&database_url, &config, seeds, cli.quiet).await?;
+                }
+            }
+        }
+        Commands::Bootstrap { from, dry_run, yes } => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let database_url = config
+                .get_database_url(cli.database_url.as_deref())
+                .context("DATABASE_URL not set. Use -d flag, set DATABASE_url env var, or add to pgcrate.toml")?;
+
+            commands::bootstrap(
+                &database_url,
+                &from,
+                &config,
+                cli.anonymize_config.as_deref(),
+                cli.quiet,
+                cli.verbose,
+                dry_run,
+                yes,
+            )
+            .await?;
+        }
+        Commands::Extension { command } => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let database_url = config
+                .get_database_url(cli.database_url.as_deref())
+                .context("DATABASE_URL not set. Use -d flag, set DATABASE_URL env var, or add to pgcrate.toml")?;
+
+            match command {
+                ExtensionCommands::List { available } => {
+                    commands::extension_list(&database_url, available, cli.quiet).await?;
+                }
+            }
+        }
+        Commands::Role { command } => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let database_url = config
+                .get_database_url(cli.database_url.as_deref())
+                .context("DATABASE_URL not set. Use -d flag, set DATABASE_URL env var, or add to pgcrate.toml")?;
+
+            match command {
+                RoleCommands::List { users, groups } => {
+                    commands::role_list(&database_url, users, groups, cli.quiet).await?;
+                }
+                RoleCommands::Describe { name } => {
+                    commands::role_describe(&database_url, &name, cli.quiet).await?;
+                }
+            }
+        }
+        Commands::Grants {
+            object,
+            schema,
+            role,
+        } => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let database_url = config
+                .get_database_url(cli.database_url.as_deref())
+                .context("DATABASE_URL not set. Use -d flag, set DATABASE_URL env var, or add to pgcrate.toml")?;
+
+            commands::grants(
+                &database_url,
+                object.as_deref(),
+                schema.as_deref(),
+                role.as_deref(),
+                cli.quiet,
+            )
+            .await?;
+        }
+        cmd => {
+            // Load config file for other commands
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+
+            // Other commands need database
+            let database_url = config
+                .get_database_url(cli.database_url.as_deref())
+                .context("DATABASE_URL not set. Use -d flag, set DATABASE_URL env var, or add to pgcrate.toml")?;
+
+            match cmd {
+                Commands::Generate {
+                    split_by,
+                    output,
+                    dry_run,
+                    schemas,
+                    exclude_schemas,
+                } => {
+                    commands::generate(
+                        &database_url,
+                        &config,
+                        cli.quiet,
+                        split_by.as_deref(),
+                        output.as_deref(),
+                        dry_run,
+                        &schemas,
+                        &exclude_schemas,
+                    )
+                    .await?;
+                }
+                Commands::Diff {
+                    from,
+                    to,
+                    schemas,
+                    exclude_schemas,
+                } => {
+                    let exit_code = commands::diff(
+                        from.as_deref().unwrap_or(&database_url),
+                        &to,
+                        output,
+                        &schemas,
+                        &exclude_schemas,
+                    )
+                    .await?;
+                    if exit_code != 0 {
+                        std::process::exit(exit_code);
+                    }
+                }
+                Commands::Describe {
+                    object,
+                    dependents,
+                    dependencies,
+                    no_stats,
+                } => {
+                    commands::describe(
+                        &database_url,
+                        &object,
+                        dependents,
+                        dependencies,
+                        no_stats,
+                        cli.verbose,
+                        output,
+                    )
+                    .await?;
+                }
+                Commands::Migrate { .. }
+                | Commands::Model { .. }
+                | Commands::Init { .. }
+                | Commands::Doctor { .. }
+                | Commands::Db { .. }
+                | Commands::Snapshot { .. }
+                | Commands::Reset { .. }
+                | Commands::Anonymize { .. }
+                | Commands::Seed { .. }
+                | Commands::Bootstrap { .. }
+                | Commands::Extension { .. }
+                | Commands::Role { .. }
+                | Commands::Grants { .. } => unreachable!(),
+            }
+        }
+    }
+
+    Ok(())
+}

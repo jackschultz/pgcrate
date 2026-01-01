@@ -1,0 +1,580 @@
+# pgcrate - Postgres Migration Tool (LLM/AI Agent Reference)
+
+## OVERVIEW
+
+pgcrate is a PostgreSQL companion tool for teams not using Rails or Django.
+It provides migrations, seeds, models, introspection, diffing, health checks, anonymization, and snapshots.
+All using raw SQL files (no ORMs) with atomic, reversible operations.
+
+## CONFIGURATION
+
+### Environment Variables
+
+- `DATABASE_URL`: PostgreSQL connection string (postgresql://user:pass@host:port/db)
+
+### Config File (pgcrate.toml)
+
+```toml
+[database]
+url = "postgresql://user:pass@host:port/db"
+
+[paths]
+migrations = "db/migrations"  # Directory with migration files
+models = "models"             # Directory with model SQL files
+seeds = "seeds"               # Directory with seed files
+
+[defaults]
+with_down = false         # Create .down sections by default
+
+[production]
+patterns = ["prod", "production"]  # URL patterns for production warnings
+
+[generate]
+split_by = "none"         # Split mode: none, schema, or table
+output = "db/migrations"  # Output directory for generated files
+include_schemas = []      # Only include these schemas (empty = all)
+exclude_schemas = []      # Exclude these schemas
+
+[model]
+sources = ["app.users", "app.orders"]  # Tables that models can reference
+
+[seeds]
+schema = "seeds"          # Target schema for CSV seeds
+
+[tools]
+pg_dump = "/path/to/pg_dump"       # Custom pg_dump path (for version matching)
+pg_restore = "/path/to/pg_restore" # Custom pg_restore path
+psql = "/path/to/psql"             # Custom psql path
+```
+
+### Configuration Precedence
+
+1. **CLI flag** (`-d/--database-url`) - Highest priority
+2. **Environment variable** (`DATABASE_URL`)
+3. **Config file** (`[database].url`) - Lowest priority
+
+### Path Resolution
+
+- **Config file location**: Resolved relative to current working directory
+- **File paths** (migrations): Resolved relative to current working directory
+- **Path traversal protection**: Config paths cannot contain `../` sequences
+- **Default location**: `db/migrations/` in current directory
+
+## COMMANDS
+
+### Project Initialization
+
+```bash
+# Interactive setup (prompts for configuration)
+pgcrate init
+
+# Non-interactive with defaults (migrations only)
+pgcrate init -y
+
+# Non-interactive with seeds and models
+pgcrate init -y --seeds --models
+
+# Preview what would be created
+pgcrate init --dry-run
+
+# Custom directories
+pgcrate init -y --migrations-dir db/migrate --seeds-dir data/seeds --models-dir sql/models
+
+# Overwrite existing config
+pgcrate init --force
+```
+
+**Flags:**
+- `-y, --yes`: Non-interactive mode (use defaults + flags)
+- `--dry-run`: Preview files without creating
+- `--force`: Overwrite existing pgcrate.toml
+- `-q, --quiet`: Minimal output
+- `--migrations-dir <path>`: Migrations directory (default: `db/migrations`)
+- `--models`: Enable models
+- `--models-dir <path>`: Models directory (default: `models`)
+- `--seeds`: Enable seeds
+- `--seeds-dir <path>`: Seeds directory (default: `seeds`)
+- `--seeds-schema <name>`: Schema for CSV seeds (default: `seeds`)
+
+**Behavior:**
+- Creates `pgcrate.toml` with configured paths
+- Creates migration/seed/model directories as needed
+- Interactive mode prompts for each option with confirmation
+- Fails if pgcrate.toml exists (use `--force` to overwrite)
+
+### Migration Commands
+
+```bash
+# Create new migration
+pgcrate new create_users
+pgcrate new add_email_column --with-down  # Also create .down.sql file
+
+# Run pending migrations
+pgcrate up
+pgcrate up --dry-run  # Preview only
+
+# Roll back migrations
+pgcrate down --steps 1 --yes
+pgcrate down --steps 3 --dry-run  # Preview rollback
+
+# Check migration status
+pgcrate status
+
+# One-command health check (connection, schema, migrations, config)
+pgcrate doctor
+pgcrate doctor --verbose   # Show passing checks (default prints only issues)
+pgcrate doctor --json      # Machine-readable report
+pgcrate doctor --strict    # Treat warnings as errors (exit 1)
+pgcrate doctor --quiet     # No output, exit code only
+```
+
+**Doctor Exit Codes:**
+- `0`: success (including warnings)
+- `1`: errors found (or warnings with `--strict`)
+- `2`: fatal error (connection/config/CLI usage)
+
+### Generate Commands
+
+```bash
+# Generate migration from existing database (single file)
+pgcrate generate
+
+# Dry run to see what would be generated
+pgcrate generate --dry-run
+
+# Split output by schema (one file per schema)
+pgcrate generate --split-by schema
+
+# Split output by table (one file per table, plus types/FKs)
+pgcrate generate --split-by table
+
+# Output to a specific directory
+pgcrate generate --output ./migrations-draft/
+
+# Include only specific schemas
+pgcrate generate --schema app --schema analytics
+
+# Exclude specific schemas
+pgcrate generate --exclude-schema legacy
+```
+
+**Generate Behavior Details:**
+- **Introspection**: Reads existing database schema via pg_catalog
+- **Output format**: Standard pgcrate migration files with `-- up` and `-- down` markers
+- **Split modes**: none (single file), schema (one per schema), table (one per table)
+- **Primary keys**: Single-column PKs inline, composite PKs as table constraints
+- **SERIAL detection**: Preserves SERIAL/BIGSERIAL vs IDENTITY column styles
+- **Foreign keys**: Always output after tables to ensure proper ordering
+- **File conflicts**: Fails if output files already exist (no silent overwrite)
+- **Timestamp ordering**: Split files use sequential timestamps (1 second apart)
+
+### Seed Commands
+
+```bash
+# List available seeds
+pgcrate seed list
+
+# Load all seeds
+pgcrate seed run
+pgcrate seed run --dry-run  # Preview only
+
+# Load specific seeds
+pgcrate seed run task_statuses priorities
+
+# Validate seed files (parse without loading)
+pgcrate seed validate
+
+# Compare seeds to database state
+pgcrate seed diff
+```
+
+**Seed Types:**
+- **CSV seeds**: Data files with automatic type inference (boolean, bigint, numeric, date, timestamptz, uuid, jsonb, text)
+- **SQL seeds**: Raw SQL files for complex insert logic (stored procedures, generate_series, etc.)
+- **Schema sidecar files**: Optional `.schema.toml` files for explicit column types and primary keys
+
+**CSV Seed Example** (`seeds/task_statuses.csv`):
+```csv
+code,label,sort_order,is_terminal
+todo,To Do,1,false
+in_progress,In Progress,2,false
+done,Done,3,true
+```
+
+**Schema Sidecar Example** (`seeds/task_statuses.schema.toml`):
+```toml
+primary_key = ["code"]
+
+[columns]
+code = "text"
+label = "text"
+sort_order = "integer"
+is_terminal = "boolean"
+```
+
+**SQL Seed Example** (`seeds/demo_users.sql`):
+```sql
+CREATE TABLE IF NOT EXISTS seeds.demo_users (...);
+TRUNCATE seeds.demo_users RESTART IDENTITY;
+INSERT INTO seeds.demo_users (email, name)
+SELECT 'user' || n || '@example.com', 'User ' || n
+FROM generate_series(1, 100) AS n;
+```
+
+**Seed Behavior:**
+- Seeds load into the configured schema (default: `seeds`)
+- CSV seeds use PostgreSQL COPY protocol for fast bulk loading
+- Foreign key constraints are disabled during load (DISABLE TRIGGER ALL)
+- Seeds are idempotent: tables are truncated before loading
+
+### Model Commands
+
+```bash
+# Run all models in DAG order
+pgcrate model run
+pgcrate model run --dry-run  # Preview execution plan
+
+# Run with selectors
+pgcrate model run -s marts.task_metrics     # Specific model
+pgcrate model run -s tag:daily              # Models with tag
+pgcrate model run -s deps:marts.user_stats  # Model + upstream deps
+
+# Compile models to target/compiled/
+pgcrate model compile
+
+# Run data tests
+pgcrate model test
+pgcrate model test -s marts.user_activity  # Test specific model
+
+# Lint dependency declarations
+pgcrate model lint deps
+pgcrate model lint deps --fix  # Auto-fix deps line
+
+# Show dependency graph
+pgcrate model graph
+pgcrate model graph --format mermaid  # Export as Mermaid diagram
+```
+
+**Model File Format:**
+```sql
+-- materialized: table
+-- deps: staging.stg_users, staging.stg_orders
+-- tags: daily, metrics
+-- tests: not_null(user_id), unique(user_id)
+-- description: User order metrics
+
+SELECT
+    u.id AS user_id,
+    COUNT(*) AS order_count
+FROM staging.stg_users u
+LEFT JOIN staging.stg_orders o ON o.user_id = u.id
+GROUP BY u.id
+```
+
+**Model Header Directives:**
+- `-- materialized: view|table|incremental` - How to create the model (default: view)
+- `-- deps: schema.table, ...` - Model dependencies (other models)
+- `-- unique_key: col1, col2` - For incremental models, the merge key
+- `-- tags: tag1, tag2` - Tags for selective execution
+- `-- tests: test_type(args)` - Data quality tests
+- `-- description: text` - Model documentation
+
+**Materialization Types:**
+- `view`: CREATE OR REPLACE VIEW (lightweight, always current)
+- `table`: DROP + CREATE TABLE AS (heavier, point-in-time snapshot)
+- `incremental`: Merge/upsert based on unique_key (append-only data)
+
+**Test Types:**
+- `not_null(column)` - Column has no NULL values
+- `unique(col1, col2)` - Column(s) have no duplicates
+- `accepted_values(column, ['a', 'b', 'c'])` - Column values in allowed set
+- `relationships(column, target_schema.target_table.target_column)` - FK relationship valid
+
+**Selector Syntax:**
+- `model_name` or `schema.model_name` - Exact match
+- `tag:tagname` - Models with specific tag
+- `deps:model` - Model plus all upstream dependencies
+- `downstream:model` - Model plus all downstream dependents
+- `tree:model` - Full lineage (upstream + downstream)
+
+## FILE STRUCTURE
+
+```
+project/
+├── pgcrate.toml
+├── db/
+│   └── migrations/
+│       ├── 20251130000000_create_users.sql
+│       └── 20251130010000_add_indexes.sql
+├── models/
+│   ├── staging/
+│   │   ├── stg_users.sql
+│   │   └── stg_orders.sql
+│   └── marts/
+│       ├── user_metrics.sql
+│       └── order_summary.sql
+└── seeds/
+    ├── task_statuses.csv
+    ├── task_statuses.schema.toml
+    └── demo_data.sql
+```
+
+## MIGRATION FILE NAMING AND ORDERING
+
+### File Format
+- **Required**: Single-file format with `-- up` and `-- down` markers
+- **Format**: `YYYYMMDDHHMMSS_description.sql` (14-digit timestamp)
+- **Timestamp format**: Numeric only (e.g., `20251130000000_create_users.sql`)
+- **Legacy support**: Rejects `.up.sql`/.`down.sql` pairs with clear error messages
+
+### Ordering Semantics
+- **Lexicographic**: Applied in filename string order (not numeric)
+- **Timestamp ordering**: Use 14-digit timestamps for proper chronological sorting
+- **Deduplication**: Duplicate versions are rejected with error
+- **Validation**: Only comments/blank lines allowed before `-- up` marker
+
+### Migration Structure
+```sql
+-- Migration description (comments only above -- up)
+
+-- up
+CREATE TABLE users (id serial primary key, email text unique);
+
+-- down
+DROP TABLE users;
+```
+
+## TRANSACTION AND FAILURE SEMANTICS
+
+### Migration Transactions
+- **Individual transactions**: Each migration runs in its own transaction
+- **Atomic**: `-- up` SQL and tracking record insertion are transactional
+- **Failure**: Failed migration is NOT recorded in schema_migrations table
+- **Recovery**: Fix SQL and rerun - failed migrations are retried automatically
+
+### Tracking Table Schema
+```sql
+CREATE SCHEMA IF NOT EXISTS pgcrate;
+CREATE TABLE IF NOT EXISTS pgcrate.schema_migrations (
+    version TEXT PRIMARY KEY,        -- Migration timestamp (YYYYMMDDHHMMSS)
+    applied_at TIMESTAMPTZ DEFAULT now()
+);
+```
+
+### Error Handling
+- **Rollback**: Failed migrations automatically rollback their changes
+- **Partial state**: Database never left in partially-applied migration state
+- **Idempotent**: Rerunning failed migrations is safe and expected
+
+## METADATA SCHEMA
+
+### Complete Schema Definition
+```sql
+-- pgcrate schema (created automatically)
+CREATE SCHEMA IF NOT EXISTS pgcrate;
+
+-- Migration tracking
+CREATE TABLE IF NOT EXISTS pgcrate.schema_migrations (
+    version TEXT PRIMARY KEY,        -- Migration timestamp (YYYYMMDDHHMMSS)
+    applied_at TIMESTAMPTZ DEFAULT now()
+);
+```
+
+### Schema Stability
+- **Stable API**: This table is considered stable for external tooling
+- **Schema versioning**: Table is created with IF NOT EXISTS for compatibility
+- **Timestamps**: Uses TIMESTAMPTZ with UTC for consistency
+
+## GLOBAL FLAGS
+
+- `-d, --database-url <URL>`: Override database connection
+- `--config <PATH>`: Custom config file path
+- `--quiet`: Minimal output (errors only)
+- `--verbose`: Show executed SQL
+- `--json`: Output as JSON instead of human-readable text
+
+## JSON OUTPUT MODE
+
+When `--json` is specified, pgcrate outputs machine-readable JSON to stdout.
+
+### Supported Commands
+
+Currently, `--json` is supported for these commands:
+- `status` - Migration status
+- `diff` - Schema comparison
+
+For unsupported commands, `--json` returns a JSON error: `"--json not supported for '<cmd>' yet"`.
+
+### Output Streams Contract
+
+- **stdout**: Data (the command's "answer") - results, JSON responses
+- **stderr**: Diagnostics (progress messages, debug output) - suppressed in JSON mode
+
+This separation allows scripts to pipe stdout (`pgcrate status --json | jq .`) without diagnostics polluting the data stream. In JSON mode, pgcrate emits no app-level output to stderr (external libraries or cargo may still emit warnings).
+
+### JSON Error Schema
+
+On error with `--json`, output goes to stdout with non-zero exit code:
+
+```json
+{
+  "ok": false,
+  "error": {
+    "message": "Error description",
+    "details": "Optional additional context"
+  }
+}
+```
+
+**Notes:**
+- `details` is omitted when not present (not an empty string)
+- `message` is always present and non-empty
+
+### JSON Success Schemas
+
+#### status command
+
+```json
+{
+  "ok": true,
+  "applied": [
+    {"version": "20251130000000", "name": "create_users", "has_down": true}
+  ],
+  "pending": [
+    {"version": "20251130010000", "name": "add_indexes", "has_down": false}
+  ],
+  "counts": {
+    "applied": 1,
+    "pending": 1,
+    "total": 2
+  }
+}
+```
+
+#### diff command
+
+```json
+{
+  "ok": true,
+  "identical": false,
+  "summary": {
+    "tables": 2,
+    "columns": 5,
+    "indexes": 1,
+    "constraints": 0,
+    "enums": 0,
+    "functions": 0,
+    "views": 0,
+    "triggers": 0,
+    "sequences": 0,
+    "extensions": 0,
+    "schemas": 0,
+    "materialized_views": 0
+  },
+  "formatted_diff": "Comparing: source → target\n..."
+}
+```
+
+### Meta Flags (--help, --version, --help-llm)
+
+Meta flags return JSON success responses (exit 0) when combined with `--json`:
+
+#### --help
+
+```json
+{ "ok": true, "help": "<full help text>" }
+```
+
+#### --version
+
+```json
+{ "ok": true, "version": "0.6.0" }
+```
+
+#### --help-llm
+
+```json
+{ "ok": true, "llm_help": "<contents of llms.txt>" }
+```
+
+### Exit Codes
+
+- `0`: Success (includes --help, --version, --help-llm; for diff: schemas identical)
+- `1`: Application error or diff found differences
+- `2`: CLI usage error (bad arguments, missing required flags)
+
+In JSON mode, both exit codes 1 and 2 produce valid JSON error output to stdout.
+
+### Examples
+
+```bash
+# Check migration status as JSON
+pgcrate status --json
+
+# Parse with jq
+pgcrate status --json | jq '.counts.pending'
+
+# Compare databases, exit 1 if different
+pgcrate diff --json --to postgres://other/db
+
+# Handle errors in scripts (no need to redirect stderr in JSON mode)
+if ! result=$(pgcrate status --json); then
+  echo "pgcrate failed" >&2
+  exit 1
+fi
+pending=$(echo "$result" | jq -r '.counts.pending')
+
+# Check for usage errors specifically
+pgcrate --json down  # Missing --steps, exits 2 with JSON error
+```
+
+## ERROR HANDLING
+
+- Commands return exit code 1 on application error, 2 on CLI parse errors
+- **Migrations**: Run in individual transactions (rollback on failure)
+- Failed migrations are NOT tracked and can be safely retried after fixing SQL
+- Use `--dry-run` flag to preview operations before execution
+
+## EXAMPLES FOR AUTOMATION
+
+```bash
+# CI/CD pipeline
+pgcrate up --quiet
+
+# Development workflow
+pgcrate new add_feature --with-down
+# Edit migration files...
+pgcrate up --verbose
+```
+
+## INTEGRATION PATTERNS
+
+### Git Hooks
+```bash
+#!/bin/sh
+# pre-commit hook
+pgcrate up --dry-run
+```
+
+### Docker Integration
+```dockerfile
+FROM postgres:15
+COPY migrations/ /app/migrations/
+COPY pgcrate.toml /app/
+RUN wget -O /usr/local/bin/pgcrate https://github.com/jackschultz/pgcrate/releases/latest/download/pgcrate-linux-amd64
+RUN chmod +x /usr/local/bin/pgcrate
+ENV DATABASE_URL=postgresql://postgres:password@localhost:5432/db
+RUN pgcrate up
+```
+
+### Configuration Management
+```bash
+# Production
+DATABASE_URL=postgresql://user:pass@prod-db:5432/prod pgcrate up --quiet
+
+# Staging
+DATABASE_URL=postgresql://user:pass@staging-db:5432/staging pgcrate up --dry-run
+
+# Development
+pgcrate up --verbose
+```

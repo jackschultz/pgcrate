@@ -1,0 +1,4 @@
+code,label,sort_order,is_terminal
+todo,To Do,1,false
+in_progress,In Progress,2,false
+done,Done,3,true

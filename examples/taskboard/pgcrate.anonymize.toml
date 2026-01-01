@@ -1,0 +1,29 @@
+# Anonymization rules for Taskboard example
+# Demonstrates all anonymization strategies
+
+seed = "taskboard-demo-seed"
+
+# User PII - replace with fake data
+[[rules]]
+table = "app.users"
+columns = { email = "fake_email", name = "fake_name" }
+
+# Team members - no PII, preserve structure
+[[rules]]
+table = "app.team_members"
+# No columns specified = preserve all
+
+# Projects - redact descriptions
+[[rules]]
+table = "app.projects"
+columns = { description = "redact" }
+
+# Tasks - redact descriptions, fake titles
+[[rules]]
+table = "app.tasks"
+columns = { description = "redact", title = "fake_name" }
+
+# Audit events - skip entirely (contains user actions)
+[[rules]]
+table = "app.audit_events"
+skip = true

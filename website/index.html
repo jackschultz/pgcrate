@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>pgcrate — PostgreSQL companion CLI</title>
+    <meta
+      name="description"
+      content="pgcrate is a PostgreSQL companion CLI: migrations, introspection, diffing, health checks, anonymization, and snapshots."
+    />
+    <style>
+      :root {
+        --bg: #0b1020;
+        --panel: #111a33;
+        --text: #e7ecff;
+        --muted: #b5c0ff;
+        --border: rgba(231, 236, 255, 0.14);
+        --accent: #8aa2ff;
+      }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto,
+          Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+        background: radial-gradient(1200px 600px at 20% -10%, #1a2a66, transparent),
+          radial-gradient(900px 500px at 100% 0%, #2b1d66, transparent),
+          var(--bg);
+        color: var(--text);
+      }
+      a {
+        color: var(--text);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      .wrap {
+        max-width: 980px;
+        margin: 0 auto;
+        padding: 48px 20px 64px;
+      }
+      .hero {
+        padding: 28px 24px;
+        border: 1px solid var(--border);
+        background: rgba(17, 26, 51, 0.65);
+        backdrop-filter: blur(10px);
+        border-radius: 16px;
+      }
+      .kicker {
+        color: var(--muted);
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        font-size: 12px;
+      }
+      h1 {
+        margin: 10px 0 8px;
+        font-size: 40px;
+        line-height: 1.05;
+      }
+      p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 16px;
+        line-height: 1.6;
+      }
+      .cta {
+        margin-top: 18px;
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: rgba(231, 236, 255, 0.06);
+        font-weight: 600;
+      }
+      .btn.primary {
+        border-color: rgba(138, 162, 255, 0.55);
+        background: rgba(138, 162, 255, 0.16);
+      }
+      code {
+        background: rgba(231, 236, 255, 0.07);
+        border: 1px solid var(--border);
+        padding: 8px 10px;
+        border-radius: 10px;
+        display: inline-block;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", "Courier New", monospace;
+        color: var(--text);
+      }
+      .grid {
+        margin-top: 18px;
+        display: grid;
+        grid-template-columns: repeat(12, 1fr);
+        gap: 12px;
+      }
+      .card {
+        grid-column: span 6;
+        padding: 14px 14px;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: rgba(17, 26, 51, 0.55);
+      }
+      .card h3 {
+        margin: 0 0 6px;
+        font-size: 14px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--text);
+      }
+      .card ul {
+        margin: 0;
+        padding-left: 18px;
+        color: var(--muted);
+      }
+      .card li {
+        margin: 6px 0;
+      }
+      footer {
+        margin-top: 18px;
+        color: rgba(181, 192, 255, 0.9);
+        font-size: 13px;
+      }
+      @media (max-width: 720px) {
+        h1 {
+          font-size: 34px;
+        }
+        .card {
+          grid-column: span 12;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="hero">
+        <div class="kicker">PostgreSQL companion CLI</div>
+        <h1>pgcrate</h1>
+        <p>
+          Migrations, introspection, diffing, health checks, snapshots, and safe
+          anonymized datasets — in a single binary.
+        </p>
+        <div class="cta">
+          <a class="btn primary" href="https://crates.io/crates/pgcrate"
+            >Install</a
+          >
+          <a class="btn" href="https://github.com/jackschultz/pgcrate">GitHub</a>
+          <a class="btn" href="https://crates.io/crates/pgcrate">crates.io</a>
+        </div>
+        <div style="margin-top: 14px">
+          <code>cargo install pgcrate</code>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div class="card">
+          <h3>Core</h3>
+          <ul>
+            <li>Pure SQL migrations (up/down)</li>
+            <li>Schema introspection and diff</li>
+            <li>Health checks with JSON output</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Data Ops</h3>
+          <ul>
+            <li>Snapshot save/restore (custom/plain)</li>
+            <li>Profile-based snapshot filtering</li>
+            <li>Anonymize dump + bootstrap workflows</li>
+          </ul>
+        </div>
+      </div>
+
+      <footer>
+        <div>
+          Docs: see the README in the repo until full docs land here.
+        </div>
+      </footer>
+    </div>
+  </body>
+</html>
+

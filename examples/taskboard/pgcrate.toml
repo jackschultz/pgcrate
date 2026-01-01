@@ -1,0 +1,30 @@
+# Taskboard example - comprehensive pgcrate configuration
+# Demonstrates all configuration options
+
+[database]
+# Database URL is set via DATABASE_URL environment variable
+# Can also be set here: url = "postgres://localhost/taskboard"
+
+[paths]
+migrations = "db/migrations"
+models = "models"
+seeds = "seeds"
+
+[defaults]
+schema = "app"
+with_down = true
+
+[model]
+# External tables that models can reference as dependencies
+sources = ["app.users", "app.teams", "app.projects", "app.tasks"]
+
+[seeds]
+schema = "seeds"
+
+[snapshot]
+directory = ".snapshots"
+default_format = "custom"
+
+[generation]
+split_by = "schema"
+exclude_schemas = ["pg_catalog", "information_schema"]

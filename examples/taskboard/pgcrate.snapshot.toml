@@ -1,0 +1,19 @@
+# Snapshot profiles for different use cases
+
+[snapshot]
+directory = ".snapshots"
+default_format = "custom"
+
+# Schema-only snapshot (no data) - useful for CI/CD schema validation
+[schema_only]
+schemas = ["app", "analytics"]
+data = false
+
+# App tables only (excludes audit logs) - for development snapshots
+[app_tables]
+schemas = ["app"]
+exclude_tables = ["app.audit_events"]
+
+# Full snapshot - everything for production backups
+[full]
+# No filters - captures all schemas and data

@@ -1,0 +1,5 @@
+code,label,sort_order,color
+low,Low,1,#6b7280
+medium,Medium,2,#3b82f6
+high,High,3,#f59e0b
+critical,Critical,4,#ef4444

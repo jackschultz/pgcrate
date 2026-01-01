@@ -1,0 +1,24 @@
+# Build artifacts
+/target
+cargo-timing*.html
+
+# Rust
+**/*.rs.bk
+
+# Editor/IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+tags
+
+# OS
+.DS_Store
+
+# Environment (may contain secrets)
+.env
+.env.local
+
+# Runtime state
+.pgcrate/
+.snapshots/
