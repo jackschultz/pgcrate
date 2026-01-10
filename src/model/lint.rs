@@ -10,6 +10,7 @@ use std::fs;
 use std::path::Path;
 
 use super::{Model, Project, Relation};
+use crate::suggest::best_match;
 
 /// Result of linting a model's dependencies
 #[derive(Debug)]
@@ -378,6 +379,13 @@ fn is_cte_name(cte_stack: &[HashSet<String>], name: &str) -> bool {
 pub fn lint_deps(project: &Project, model: &Model) -> Result<LintDepsResult> {
     let rels = infer_relations_from_sql(&model.body_sql)?;
 
+    let known_relations: Vec<Relation> = project
+        .models
+        .keys()
+        .cloned()
+        .chain(project.sources.iter().cloned())
+        .collect();
+
     let mut inferred_model_deps: BTreeSet<Relation> = BTreeSet::new();
     let mut unknown_relations: BTreeSet<String> = BTreeSet::new();
     let mut unqualified_relations: BTreeSet<String> = BTreeSet::new();
@@ -385,7 +393,21 @@ pub fn lint_deps(project: &Project, model: &Model) -> Result<LintDepsResult> {
     for parts in rels {
         match parts.len() {
             1 => {
-                unqualified_relations.insert(parts[0].clone());
+                let name = parts[0].clone();
+                let candidates: Vec<String> = known_relations
+                    .iter()
+                    .filter(|r| r.name == name)
+                    .map(|r| r.to_string())
+                    .collect();
+                if candidates.is_empty() {
+                    unqualified_relations.insert(name);
+                } else {
+                    unqualified_relations.insert(format!(
+                        "{} (found in: {})",
+                        name,
+                        candidates.join(", ")
+                    ));
+                }
             }
             2 => {
                 let rel = Relation {
@@ -398,7 +420,11 @@ pub fn lint_deps(project: &Project, model: &Model) -> Result<LintDepsResult> {
                     }
                 } else if !project.sources.contains(&rel) {
                     // Not a model and not a declared source = unknown
-                    unknown_relations.insert(rel.to_string());
+                    if let Some(suggestion) = did_you_mean_in_schema(&known_relations, &rel) {
+                        unknown_relations.insert(format!("{} (did you mean {}?)", rel, suggestion));
+                    } else {
+                        unknown_relations.insert(rel.to_string());
+                    }
                 }
                 // If it's a source, we don't need to track it
             }
@@ -414,6 +440,15 @@ pub fn lint_deps(project: &Project, model: &Model) -> Result<LintDepsResult> {
         unknown_relations: unknown_relations.into_iter().collect(),
         unqualified_relations: unqualified_relations.into_iter().collect(),
     })
+}
+
+fn did_you_mean_in_schema(known: &[Relation], rel: &Relation) -> Option<String> {
+    let candidates: Vec<String> = known
+        .iter()
+        .filter(|r| r.schema == rel.schema)
+        .map(|r| r.name.clone())
+        .collect();
+    best_match(&rel.name, &candidates, 2).map(|name| format!("{}.{}", rel.schema, name))
 }
 
 /// Rewrite the deps line in a model file

@@ -22,7 +22,7 @@ cp .env.example .env
 
 # Create database and apply migrations
 pgcrate db create
-pgcrate up
+pgcrate migrate up
 
 # Load seed data
 pgcrate seed run
@@ -67,13 +67,13 @@ pgcrate doctor
 pgcrate db create
 
 # Apply all migrations
-pgcrate up
+pgcrate migrate up
 
 # Check status
-pgcrate status
+pgcrate migrate status
 
 # Preview what would run
-pgcrate up --dry-run
+pgcrate migrate up --dry-run
 ```
 
 ### 2. Seeds
@@ -86,7 +86,7 @@ pgcrate seed list
 pgcrate seed run
 
 # Load specific seed
-pgcrate seed run task_statuses
+pgcrate seed run public.task_statuses
 
 # Preview without loading
 pgcrate seed run --dry-run
@@ -270,6 +270,7 @@ taskboard/
 ├── db/
 │   └── migrations/           # SQL migrations
 │       ├── 20250101000000_create_schemas.sql
+│       ├── 20250101000500_create_seed_tables.sql
 │       ├── 20250101001000_create_users_teams.sql
 │       ├── 20250101002000_create_projects_tasks.sql
 │       ├── 20250101003000_create_audit_events.sql
@@ -285,10 +286,11 @@ taskboard/
 │       ├── user_activity.sql # User metrics (incremental)
 │       └── team_summary.sql  # Team rollup (table)
 └── seeds/
-    ├── task_statuses.csv         # Status reference data
-    ├── task_statuses.schema.toml # Explicit types
-    ├── priorities.csv            # Priority levels
-    └── demo_users.sql            # SQL seed with logic
+    └── public/
+        ├── task_statuses.csv         # Status reference data
+        ├── task_statuses.schema.toml # Explicit types
+        ├── priorities.csv            # Priority levels
+        └── demo_users.sql            # SQL seed with logic
 ```
 
 ---
@@ -358,6 +360,6 @@ pgcrate model run -s tree:staging.stg_tasks
 ## Notes
 
 - Migration `20250101005000_backfill_demo_data` has no down file (irreversible)
-- The `demo_users.sql` seed requires the `seeds.demo_users` table to exist first
+- The `demo_users.sql` seed creates `public.demo_users` if missing
 - Incremental models use MERGE semantics with `unique_key`
 - Snapshot profiles are defined in `pgcrate.snapshot.toml`

@@ -13,6 +13,7 @@ mod role;
 mod schema;
 mod seed;
 mod snapshot;
+mod sql_cmd;
 
 // Re-export snapshot commands from new module
 pub use snapshot::{
@@ -39,6 +40,9 @@ pub use schema::{describe, diff, generate, init};
 
 // Re-export seed commands from new module
 pub use seed::{seed_diff, seed_list, seed_run, seed_validate};
+
+// Re-export sql/query command
+pub use sql_cmd::sql;
 
 // Re-export extension commands from new module
 pub use extension::extension_list;

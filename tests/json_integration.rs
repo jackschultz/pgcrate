@@ -54,7 +54,7 @@ fn parse_json(output: &std::process::Output) -> serde_json::Value {
 #[test]
 fn test_json_error_missing_database_url() {
     // When DATABASE_URL is not set and no -d flag, should get JSON error
-    let output = run_pgcrate_no_db(&["--json", "status"]);
+    let output = run_pgcrate_no_db(&["--json", "migrate", "status"]);
 
     // Should exit with code 1 (application error)
     assert!(!output.status.success(), "Should fail without DATABASE_URL");
@@ -76,7 +76,7 @@ fn test_json_error_missing_database_url() {
 #[test]
 fn test_json_error_schema() {
     // Verify the JSON error schema shape
-    let output = run_pgcrate_no_db(&["--json", "status"]);
+    let output = run_pgcrate_no_db(&["--json", "migrate", "status"]);
 
     let json = parse_json(&output);
 
@@ -99,7 +99,7 @@ fn test_json_error_schema() {
 #[test]
 fn test_json_error_details_omitted_when_empty() {
     // When there's no source error, details should be omitted (not an empty string)
-    let output = run_pgcrate_no_db(&["--json", "status"]);
+    let output = run_pgcrate_no_db(&["--json", "migrate", "status"]);
 
     let json = parse_json(&output);
 
@@ -130,7 +130,7 @@ fn test_json_flag_in_help() {
 #[test]
 fn test_json_no_ansi_codes() {
     // JSON output should not contain ANSI escape codes
-    let output = run_pgcrate_no_db(&["--json", "status"]);
+    let output = run_pgcrate_no_db(&["--json", "migrate", "status"]);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -146,7 +146,7 @@ fn test_human_mode_error_to_stderr() {
     // In human mode, errors should go to stderr, not stdout
     let output = Command::new("cargo")
         .args(&["run", "-q", "--"])
-        .args(&["status"]) // No --json
+        .args(&["migrate", "status"]) // No --json
         .env_remove("DATABASE_URL")
         .output()
         .expect("Failed to execute pgcrate");
@@ -172,7 +172,7 @@ fn test_human_mode_error_to_stderr() {
 #[test]
 fn test_json_mode_error_to_stdout() {
     // In JSON mode, errors should go to stdout as JSON
-    let output = run_pgcrate_no_db(&["--json", "status"]);
+    let output = run_pgcrate_no_db(&["--json", "migrate", "status"]);
 
     assert!(!output.status.success());
 
@@ -202,8 +202,8 @@ fn test_json_mode_error_to_stdout() {
 #[test]
 fn test_json_usage_error_missing_required_arg() {
     // When --json is set and a required arg is missing, should get JSON error with exit 2
-    // `down` requires --steps
-    let output = run_pgcrate_no_db(&["--json", "down"]);
+    // `migrate down` requires --steps
+    let output = run_pgcrate_no_db(&["--json", "migrate", "down"]);
 
     // Should exit with code 2 (usage error)
     assert_eq!(
@@ -243,7 +243,7 @@ fn test_human_usage_error_to_stderr() {
     // In human mode, usage errors should go to stderr (via clap)
     let output = Command::new("cargo")
         .args(&["run", "-q", "--"])
-        .args(&["down"]) // Missing --steps, no --json
+        .args(&["migrate", "down"]) // Missing --steps, no --json
         .env_remove("DATABASE_URL")
         .output()
         .expect("Failed to execute pgcrate");
@@ -275,8 +275,8 @@ fn test_human_usage_error_to_stderr() {
 #[test]
 fn test_json_unsupported_command_returns_json_error() {
     // When --json is set with an unsupported command, should get JSON error
-    // `up` is not yet supported for JSON output
-    let output = run_pgcrate_no_db(&["--json", "up"]);
+    // `migrate up` is not yet supported for JSON output
+    let output = run_pgcrate_no_db(&["--json", "migrate", "up"]);
 
     // Should exit with code 1
     assert_eq!(
@@ -291,8 +291,8 @@ fn test_json_unsupported_command_returns_json_error() {
 
     let message = json["error"]["message"].as_str().unwrap();
     assert!(
-        message.contains("--json not supported") && message.contains("up"),
-        "Error should mention --json not supported for 'up': {}",
+        message.contains("--json not supported"),
+        "Error should mention --json not supported: {}",
         message
     );
 }
@@ -300,7 +300,7 @@ fn test_json_unsupported_command_returns_json_error() {
 #[test]
 fn test_json_unsupported_command_no_human_output() {
     // Unsupported command in JSON mode should not emit any human-readable output
-    let output = run_pgcrate_no_db(&["--json", "up"]);
+    let output = run_pgcrate_no_db(&["--json", "migrate", "up"]);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);

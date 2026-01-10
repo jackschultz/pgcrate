@@ -35,27 +35,27 @@ pub fn compile_model(project: &Project, model: &Model) -> Result<CompileOutput> 
     Ok(CompileOutput { output_path })
 }
 
-/// Generate SQL to execute a model (for runtime, not compile output)
-pub fn generate_run_sql(model: &Model) -> String {
+/// Generate the CREATE SQL only (without DROP statements)
+/// Used by execute.rs which handles drops separately due to PostgreSQL transaction visibility.
+pub fn generate_create_sql(model: &Model) -> String {
     let body = model.body_sql.trim().trim_end_matches(';').trim();
     match model.header.materialized {
         Materialized::View => {
             format!("CREATE OR REPLACE VIEW {} AS\n{}", model.id, body)
         }
-        Materialized::Table => {
-            format!(
-                "DROP TABLE IF EXISTS {} CASCADE;\nCREATE TABLE {} AS\n{}",
-                model.id, model.id, body
-            )
-        }
-        Materialized::Incremental => {
-            // MVP: treat as table (full refresh)
-            format!(
-                "DROP TABLE IF EXISTS {} CASCADE;\nCREATE TABLE {} AS\n{}",
-                model.id, model.id, body
-            )
+        Materialized::Table | Materialized::Incremental => {
+            format!("CREATE TABLE {} AS\n{}", model.id, body)
         }
     }
+}
+
+/// Generate full SQL to execute a model (drops + create, for compile output and display)
+pub fn generate_run_sql(model: &Model) -> String {
+    let create_sql = generate_create_sql(model);
+    format!(
+        "DROP VIEW IF EXISTS {} CASCADE;\nDROP TABLE IF EXISTS {} CASCADE;\n{}",
+        model.id, model.id, create_sql
+    )
 }
 
 #[cfg(test)]
@@ -77,8 +77,13 @@ mod tests {
                 unique_key: Vec::new(),
                 tests: Vec::new(),
                 tags: Vec::new(),
+                watermark: None,
+                lookback: None,
+                incremental_filter: None,
             },
             body_sql: body.into(),
+            base_sql: None,
+            incremental_sql: None,
         }
     }
 
@@ -88,13 +93,17 @@ mod tests {
         let sql = generate_run_sql(&model);
         assert!(sql.contains("CREATE OR REPLACE VIEW analytics.users"));
         assert!(sql.contains("SELECT 1"));
-        assert!(!sql.contains("DROP"));
+        // Views now drop both to handle any existing object type
+        assert!(sql.contains("DROP VIEW IF EXISTS analytics.users CASCADE"));
+        assert!(sql.contains("DROP TABLE IF EXISTS analytics.users CASCADE"));
     }
 
     #[test]
     fn test_run_sql_table() {
         let model = make_model(Materialized::Table, "SELECT 1");
         let sql = generate_run_sql(&model);
+        // Tables now drop both views and tables to handle materialization type changes
+        assert!(sql.contains("DROP VIEW IF EXISTS analytics.users CASCADE"));
         assert!(sql.contains("DROP TABLE IF EXISTS analytics.users CASCADE"));
         assert!(sql.contains("CREATE TABLE analytics.users AS"));
     }
@@ -104,7 +113,8 @@ mod tests {
         let mut model = make_model(Materialized::Incremental, "SELECT 1");
         model.header.unique_key = vec!["id".into()];
         let sql = generate_run_sql(&model);
-        // MVP: incremental treated as full refresh
+        // MVP: incremental treated as full refresh with view/table cleanup
+        assert!(sql.contains("DROP VIEW IF EXISTS"));
         assert!(sql.contains("DROP TABLE IF EXISTS"));
         assert!(sql.contains("CREATE TABLE"));
     }

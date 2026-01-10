@@ -75,7 +75,6 @@ pub struct ModelConfig {
 #[derive(Deserialize, Debug, Default)]
 pub struct SeedsConfig {
     pub directory: Option<String>,
-    pub schema: Option<String>,
 }
 
 /// PostgreSQL tool paths configuration
@@ -311,14 +310,6 @@ impl Config {
             .as_ref()
             .and_then(|s| s.directory.as_deref())
             .or_else(|| self.paths.as_ref().and_then(|p| p.seeds.as_deref()))
-            .unwrap_or("seeds")
-    }
-
-    /// Get seeds target schema
-    pub fn seeds_schema(&self) -> &str {
-        self.seeds
-            .as_ref()
-            .and_then(|s| s.schema.as_deref())
             .unwrap_or("seeds")
     }
 
@@ -756,18 +747,15 @@ mod tests {
         let toml_str = r#"
             [seeds]
             directory = "data/seeds"
-            schema = "reference"
         "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         assert_eq!(config.seeds_dir(), "data/seeds");
-        assert_eq!(config.seeds_schema(), "reference");
     }
 
     #[test]
     fn test_seeds_config_defaults() {
         let config = Config::default();
         assert_eq!(config.seeds_dir(), "seeds");
-        assert_eq!(config.seeds_schema(), "seeds");
     }
 
     #[test]
@@ -799,7 +787,6 @@ mod tests {
         let mut config = Config::default();
         config.seeds = Some(SeedsConfig {
             directory: Some("../seeds".to_string()),
-            schema: None,
         });
         assert!(config.validate_paths().is_err());
     }
