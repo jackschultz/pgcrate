@@ -25,8 +25,11 @@ fn test_help_llm_flag() {
     assert!(stdout.contains("## COMMANDS"));
     assert!(stdout.contains("## CONFIGURATION"));
     assert!(stdout.contains("Migration Commands"));
-    assert!(stdout.contains("pgcrate new create_users"));
+    assert!(stdout.contains("pgcrate migrate new create_users"));
     assert!(stdout.contains("DATABASE_URL"));
+    assert!(stdout.contains("Incremental Models"));
+    assert!(stdout.contains("unique_key"));
+    assert!(stdout.contains("--full-refresh"));
 
     // Test that it doesn't contain clap's default help format
     assert!(!stdout.contains("Usage: pgcrate"));
@@ -48,10 +51,9 @@ fn test_regular_help_still_works() {
     assert!(stdout.contains("Usage: pgcrate"));
     assert!(stdout.contains("[OPTIONS]"));
     assert!(stdout.contains("Commands:"));
-    assert!(stdout.contains("up"));
-    assert!(stdout.contains("down"));
-    assert!(stdout.contains("status"));
-    assert!(stdout.contains("new"));
+    assert!(stdout.contains("migrate"));
+    assert!(stdout.contains("model"));
+    assert!(stdout.contains("init"));
 
     // Test that it mentions the LLM help
     assert!(stdout.contains("--help-llm"));
@@ -61,7 +63,7 @@ fn test_regular_help_still_works() {
 #[test]
 fn test_help_llm_with_subcommand() {
     let output = Command::new(pgcrate_binary())
-        .args(&["--help-llm", "up"])
+        .args(&["--help-llm", "migrate"])
         .output()
         .expect("Failed to execute command");
 

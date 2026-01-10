@@ -1,5 +1,6 @@
 use anyhow::{bail, Result};
 use chrono::{DateTime, Utc};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::time::SystemTime;
 use tokio_postgres::Client;
@@ -12,7 +13,7 @@ use crate::sql::quote_ident;
 // ============================================================================
 
 /// Extended column info for describe output (adds FK reference display)
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct ColumnInfo {
     pub name: String,
     pub data_type: String,
@@ -25,7 +26,7 @@ pub struct ColumnInfo {
 }
 
 /// Result of resolving an object name to a schema-qualified table
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct ResolvedTable {
     pub schema: String,
     pub name: String,
@@ -34,7 +35,7 @@ pub struct ResolvedTable {
 }
 
 /// Aggregated view of a single table for describe output
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct TableDescribe {
     #[allow(dead_code)] // Stored for completeness; callers use resolved.schema
     pub schema: String,
@@ -54,7 +55,7 @@ pub struct TableDescribe {
 /// Note: For partitioned tables, `pg_table_size`/`pg_indexes_size`/`pg_total_relation_size`
 /// return the size of the parent table only (typically 0 since data lives in partitions).
 /// The `is_partitioned` flag indicates when sizes should be interpreted as parent-only.
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct TableStats {
     pub row_estimate: i64,
     pub table_size: String,
@@ -72,7 +73,7 @@ pub struct TableStats {
 }
 
 /// Additional table details shown with --verbose
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct TableDetails {
     pub owner: String,
     pub table_kind: String,  // "ordinary table" or "partitioned table"
@@ -80,7 +81,7 @@ pub struct TableDetails {
 }
 
 /// Foreign key reference (for dependents/dependencies)
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct ForeignKeyRef {
     #[allow(dead_code)] // Retained for potential verbose output or debugging
     pub constraint_name: String,
@@ -93,7 +94,7 @@ pub struct ForeignKeyRef {
 }
 
 /// View reference
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct ViewRef {
     pub schema: String,
     pub name: String,
@@ -101,7 +102,7 @@ pub struct ViewRef {
 }
 
 /// Trigger reference (for dependents)
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct TriggerRef {
     pub schema: String,
     pub table_name: String,
@@ -109,7 +110,7 @@ pub struct TriggerRef {
 }
 
 /// Trigger function reference (for dependencies)
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct TriggerFunctionRef {
     pub function_schema: String,
     pub function_name: String,
@@ -117,7 +118,7 @@ pub struct TriggerFunctionRef {
 }
 
 /// Type reference (for dependencies)
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct TypeRef {
     pub schema: String,
     pub name: String,
@@ -125,7 +126,7 @@ pub struct TypeRef {
 }
 
 /// Row-Level Security info for a table
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct RlsInfo {
     pub enabled: bool,
     pub forced: bool,
@@ -133,7 +134,7 @@ pub struct RlsInfo {
 }
 
 /// A single RLS policy
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct RlsPolicy {
     pub name: String,
     pub command: String,    // "ALL", "SELECT", "INSERT", "UPDATE", "DELETE"
@@ -144,7 +145,7 @@ pub struct RlsPolicy {
 }
 
 /// Objects that depend on a table
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct Dependents {
     pub foreign_keys: Vec<ForeignKeyRef>,
     pub views: Vec<ViewRef>,
@@ -152,7 +153,7 @@ pub struct Dependents {
 }
 
 /// Objects that a table depends on
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct Dependencies {
     pub foreign_keys: Vec<ForeignKeyRef>,
     pub trigger_functions: Vec<TriggerFunctionRef>,

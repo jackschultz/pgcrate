@@ -560,10 +560,10 @@ migrations = "migrations"
         .unwrap()
         .join("pgcrate");
 
-    // Apply generated migration to target using pgcrate up
+    // Apply generated migration to target using pgcrate migrate up
     // Run from temp_dir so relative path works
     let up_output = Command::new(&binary_path)
-        .args(&["up", "--config", "pgcrate.toml"])
+        .args(&["migrate", "up", "--config", "pgcrate.toml"])
         .env("DATABASE_URL", &target_url)
         .current_dir(&temp_dir)
         .output()

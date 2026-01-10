@@ -16,6 +16,8 @@ mod output;
 mod seed;
 mod snapshot;
 mod sql;
+mod suggest;
+mod tips;
 use config::Config;
 use output::{HelpResponse, JsonError, LlmHelpResponse, Output, VersionResponse};
 
@@ -25,14 +27,27 @@ const LLM_HELP: &str = include_str!("../llms.txt");
 /// Version from Cargo.toml
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Commands that support JSON output mode
-/// Note: For commands with subcommands (migrate, snapshot), JSON support varies by subcommand
-const JSON_SUPPORTED_COMMANDS: &[&str] = &[
-    "diff",     // schema diff
-    "doctor",   // health checks
-    "snapshot", // list, info
-    "migrate",  // status subcommand
-];
+/// Whether the selected command supports JSON output mode.
+/// Note: For commands with subcommands, JSON support can vary by subcommand.
+fn json_supported(command: &Commands) -> bool {
+    match command {
+        Commands::Describe { .. } => true,
+        Commands::Diff { .. } => true,
+        Commands::Doctor { .. } => true,
+        Commands::Sql { .. } => true,
+        Commands::Snapshot { command } => matches!(
+            command,
+            SnapshotCommands::List | SnapshotCommands::Info { .. }
+        ),
+        Commands::Migrate { command } => matches!(command, MigrateCommands::Status),
+        Commands::Model { command } => matches!(
+            command,
+            ModelCommands::Status { .. } | ModelCommands::Show { .. }
+        ),
+        Commands::Status => true,
+        _ => false,
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "pgcrate")]
@@ -121,9 +136,6 @@ enum Commands {
         /// Seeds directory (implies --seeds)
         #[arg(long, default_value = "seeds")]
         seeds_dir: String,
-        /// Schema for seed tables
-        #[arg(long, default_value = "seeds")]
-        seeds_schema: String,
     },
     /// Database management commands
     Db {
@@ -196,6 +208,17 @@ enum Commands {
         #[arg(long)]
         strict: bool,
     },
+    /// Run arbitrary SQL against the database (alias: query)
+    #[command(alias = "query")]
+    Sql {
+        /// SQL to execute (can contain multiple statements). Reads from stdin if not provided.
+        /// Use -c for psql compatibility: pgcrate sql -c "SELECT 1"
+        #[arg(short = 'c', value_name = "SQL")]
+        command: Option<String>,
+        /// Allow write statements (INSERT/UPDATE/DELETE/DDL)
+        #[arg(long)]
+        allow_write: bool,
+    },
     /// Save and restore database state
     Snapshot {
         #[command(subcommand)]
@@ -244,6 +267,9 @@ enum Commands {
         #[arg(long)]
         role: Option<String>,
     },
+
+    /// Show migration status (alias for `migrate status`)
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -278,6 +304,9 @@ enum RoleCommands {
 enum MigrateCommands {
     /// Run pending migrations
     Up {
+        /// Accept defaults without prompting (no-op; `up` is non-interactive)
+        #[arg(short = 'y', long)]
+        yes: bool,
         /// Show what would run without running
         #[arg(long)]
         dry_run: bool,
@@ -300,6 +329,9 @@ enum MigrateCommands {
     New {
         /// Migration name (e.g., create_users)
         name: String,
+        /// Accept defaults without prompting (no-op; `new` is non-interactive)
+        #[arg(short = 'y', long)]
+        yes: bool,
         /// Also create empty .down.sql file
         #[arg(long)]
         with_down: bool,
@@ -338,6 +370,9 @@ struct SelectionArgs {
 enum ModelCommands {
     /// Execute models in DAG order
     Run {
+        /// Models to run (same as --select). Examples: analytics.users, tag:daily
+        #[arg(value_name = "MODEL")]
+        models: Vec<String>,
         #[command(flatten)]
         selection: SelectionArgs,
         /// Show execution plan without running
@@ -346,16 +381,28 @@ enum ModelCommands {
         /// Force full refresh for incremental models (drop and recreate)
         #[arg(long)]
         full_refresh: bool,
+        /// Initialize models directory if missing
+        #[arg(long)]
+        init: bool,
+        /// Accept defaults without prompting (for consistency; model run is non-interactive)
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
     /// Compile models to target/compiled/
     Compile {
         #[command(flatten)]
         selection: SelectionArgs,
+        /// Initialize models directory if missing
+        #[arg(long)]
+        init: bool,
     },
     /// Run data tests defined in model headers
     Test {
         #[command(flatten)]
         selection: SelectionArgs,
+        /// Initialize models directory if missing
+        #[arg(long)]
+        init: bool,
     },
     /// Generate markdown documentation
     Docs {
@@ -385,6 +432,46 @@ enum ModelCommands {
         /// Include example model
         #[arg(long)]
         example: bool,
+        /// Accept defaults without prompting (for consistency; model init is non-interactive)
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+    /// Create a new model file
+    New {
+        /// Model id (schema.name)
+        id: String,
+        /// Materialization type: view, table, incremental
+        #[arg(long, default_value = "view")]
+        materialized: String,
+        /// Skip prompts (e.g., overwrite confirmation)
+        #[arg(short = 'y', long)]
+        yes: bool,
+        /// Overwrite existing file
+        #[arg(long)]
+        force: bool,
+    },
+    /// Show compiled SQL for a model (does not execute)
+    Show {
+        /// Model id (schema.name)
+        id: String,
+    },
+    /// Show model sync status vs database
+    Status {
+        #[command(flatten)]
+        selection: SelectionArgs,
+    },
+    /// Move/rename a model to a new schema or name
+    Move {
+        /// Source model id (schema.name)
+        source: String,
+        /// Destination model id (schema.name)
+        dest: String,
+        /// Drop existing database object if it exists
+        #[arg(long)]
+        drop_old: bool,
+        /// Skip prompts
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
 }
 
@@ -506,7 +593,7 @@ enum AnonymizeCommands {
 enum SeedCommands {
     /// Load seed data into database
     Run {
-        /// Specific seeds to run (by name, without extension)
+        /// Specific seeds to run (`schema.table` or just `table` if unique)
         seeds: Vec<String>,
         /// Show what would be loaded without loading
         #[arg(long)]
@@ -516,38 +603,14 @@ enum SeedCommands {
     List,
     /// Validate seed files without loading
     Validate {
-        /// Specific seeds to validate (by name, without extension)
+        /// Specific seeds to validate (`schema.table` or just `table` if unique)
         seeds: Vec<String>,
     },
     /// Compare seed files to database state
     Diff {
-        /// Specific seeds to compare (by name, without extension)
+        /// Specific seeds to compare (`schema.table` or just `table` if unique)
         seeds: Vec<String>,
     },
-}
-
-impl Commands {
-    /// Get the command name as a string for JSON support checking
-    fn name(&self) -> &'static str {
-        match self {
-            Commands::Migrate { .. } => "migrate",
-            Commands::Model { .. } => "model",
-            Commands::Init { .. } => "init",
-            Commands::Db { .. } => "db",
-            Commands::Reset { .. } => "reset",
-            Commands::Generate { .. } => "generate",
-            Commands::Diff { .. } => "diff",
-            Commands::Describe { .. } => "describe",
-            Commands::Doctor { .. } => "doctor",
-            Commands::Snapshot { .. } => "snapshot",
-            Commands::Anonymize { .. } => "anonymize",
-            Commands::Seed { .. } => "seed",
-            Commands::Bootstrap { .. } => "bootstrap",
-            Commands::Extension { .. } => "extension",
-            Commands::Role { .. } => "role",
-            Commands::Grants { .. } => "grants",
-        }
-    }
 }
 
 #[tokio::main]
@@ -602,28 +665,35 @@ async fn main() {
     let output = Output::new(cli.json, cli.quiet, cli.verbose);
 
     // Gate unsupported commands in JSON mode
-    if cli.json {
-        let cmd_name = cli.command.name();
-        if !JSON_SUPPORTED_COMMANDS.contains(&cmd_name) {
-            JsonError::new(format!("--json not supported for '{}' yet", cmd_name)).print();
-            std::process::exit(1);
-        }
+    if cli.json && !json_supported(&cli.command) {
+        JsonError::new("--json not supported for this command yet".to_string()).print();
+        std::process::exit(1);
     }
 
     if let Err(e) = run(cli, &output).await {
         if json_mode {
             // JSON mode: output structured error to stdout
             // Only include details if source error is non-empty
-            let details = e.source().map(|s| s.to_string()).filter(|s| !s.is_empty());
-            let json_err = match details {
-                Some(d) => JsonError::with_details(e.to_string(), d),
-                None => JsonError::new(e.to_string()),
-            };
-            json_err.print();
+            if let Some(model_err) = e.downcast_ref::<crate::model::ModelExecutionError>() {
+                let payload = serde_json::json!({
+                    "ok": false,
+                    "model": model_err.model,
+                    "error": model_err.error,
+                    "sql": model_err.sql,
+                    "hints": model_err.hints,
+                    "suggestions": model_err.suggestions,
+                });
+                println!("{}", serde_json::to_string_pretty(&payload).unwrap());
+            } else {
+                // Use full error chain for details (same as human mode)
+                let full_chain = format!("{e:#}");
+                let json_err = JsonError::with_details(e.to_string(), full_chain);
+                json_err.print();
+            }
             std::process::exit(1);
         } else {
-            // Human mode: error to stderr
-            eprintln!("Error: {e:?}");
+            // Human mode: error to stderr with full chain
+            eprintln!("Error: {e:#}");
             std::process::exit(1);
         }
     }
@@ -634,12 +704,16 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
         Commands::Migrate { command } => {
             // Handle migrate subcommands
             match command {
-                MigrateCommands::New { name, with_down } => {
+                MigrateCommands::New {
+                    name,
+                    yes: _,
+                    with_down,
+                } => {
                     let config = Config::load(cli.config_path.as_deref())
                         .context("Failed to load configuration")?;
                     commands::new_migration(&name, &config, with_down)?;
                 }
-                MigrateCommands::Up { dry_run } => {
+                MigrateCommands::Up { yes: _, dry_run } => {
                     let config = Config::load(cli.config_path.as_deref())
                         .context("Failed to load configuration")?;
                     let database_url = config
@@ -706,36 +780,45 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
             let cwd = std::env::current_dir().context("get current directory")?;
             match command {
-                ModelCommands::Compile { selection } => {
+                ModelCommands::Compile { selection, init } => {
                     commands::model::compile(
                         &cwd,
                         &config,
                         &selection.select,
                         &selection.exclude,
+                        init,
                         cli.quiet,
                     )?;
                 }
                 ModelCommands::Run {
+                    models,
                     selection,
                     dry_run,
                     full_refresh,
+                    init,
+                    yes: _,
                 } => {
                     let database_url = config
                         .get_database_url(cli.database_url.as_deref())
                         .context("DATABASE_URL not set")?;
+                    // Merge positional models with --select flag
+                    let mut select = selection.select.clone();
+                    select.extend(models);
                     commands::model::run(
                         &cwd,
                         &config,
                         &database_url,
-                        &selection.select,
+                        &select,
                         &selection.exclude,
                         dry_run,
                         full_refresh,
+                        init,
                         cli.quiet,
+                        cli.verbose,
                     )
                     .await?;
                 }
-                ModelCommands::Test { selection } => {
+                ModelCommands::Test { selection, init } => {
                     let database_url = config
                         .get_database_url(cli.database_url.as_deref())
                         .context("DATABASE_URL not set")?;
@@ -745,6 +828,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                         &database_url,
                         &selection.select,
                         &selection.exclude,
+                        init,
                         cli.quiet,
                     )
                     .await?;
@@ -806,8 +890,76 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                         std::process::exit(exit_code);
                     }
                 }
-                ModelCommands::Init { example } => {
-                    commands::model::init(&cwd, example, cli.quiet)?;
+                ModelCommands::Init { example, yes: _ } => {
+                    commands::model::init(&cwd, &config, example, cli.quiet)?;
+                }
+                ModelCommands::New {
+                    id,
+                    materialized,
+                    yes,
+                    force,
+                } => {
+                    commands::model::new_model(
+                        &cwd,
+                        &config,
+                        &id,
+                        &materialized,
+                        yes,
+                        force,
+                        cli.quiet,
+                    )?;
+                }
+                ModelCommands::Show { id } => {
+                    let database_url = config
+                        .get_database_url(cli.database_url.as_deref())
+                        .unwrap_or_default();
+                    commands::model::show(&cwd, &config, &database_url, &id, cli.quiet, cli.json)
+                        .await?;
+                }
+                ModelCommands::Status { selection } => {
+                    let database_url = config
+                        .get_database_url(cli.database_url.as_deref())
+                        .context("DATABASE_URL not set")?;
+                    let exit_code = commands::model::status(
+                        &cwd,
+                        &config,
+                        &database_url,
+                        &selection.select,
+                        &selection.exclude,
+                        cli.quiet,
+                        cli.json,
+                    )
+                    .await?;
+                    if exit_code != 0 {
+                        std::process::exit(exit_code);
+                    }
+                }
+                ModelCommands::Move {
+                    source,
+                    dest,
+                    drop_old,
+                    yes,
+                } => {
+                    let database_url = if drop_old {
+                        Some(
+                            config
+                                .get_database_url(cli.database_url.as_deref())
+                                .context("DATABASE_URL not set (required for --drop-old)")?,
+                        )
+                    } else {
+                        config.get_database_url(cli.database_url.as_deref())
+                    };
+                    commands::model::move_model(
+                        &cwd,
+                        &config,
+                        database_url.as_deref(),
+                        &source,
+                        &dest,
+                        drop_old,
+                        yes,
+                        cli.quiet,
+                    )
+                    .await?;
                 }
             }
         }
@@ -821,7 +973,6 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
             models_dir,
             seeds,
             seeds_dir,
-            seeds_schema,
         } => {
             commands::init(
                 yes,
@@ -833,7 +984,6 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 &models_dir,
                 seeds,
                 &seeds_dir,
-                &seeds_schema,
             )?;
         }
         Commands::Doctor { strict } => {
@@ -849,6 +999,24 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
             if exit_code != 0 {
                 std::process::exit(exit_code);
             }
+        }
+        Commands::Sql {
+            command,
+            allow_write,
+        } => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let database_url = config
+                .get_database_url(cli.database_url.as_deref())
+                .context("DATABASE_URL not set. Use -d flag, set DATABASE_URL env var, or add to pgcrate.toml")?;
+            commands::sql(
+                &database_url,
+                command.as_deref(),
+                allow_write,
+                cli.quiet,
+                cli.json,
+            )
+            .await?;
         }
         Commands::Db { command } => {
             // db commands need database URL but not config
@@ -986,14 +1154,14 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
 
             match command {
                 SeedCommands::Run { seeds, dry_run } => {
-                    // dry_run doesn't need database connection
-                    let database_url = if dry_run {
-                        String::new()
-                    } else {
-                        config
-                            .get_database_url(cli.database_url.as_deref())
-                            .context("DATABASE_URL not set. Use -d flag, set DATABASE_URL env var, or add to pgcrate.toml")?
-                    };
+                    // dry_run can run without a database connection, but if DATABASE_URL is
+                    // available we use it to resolve target tables for clearer output.
+                    let database_url = config
+                        .get_database_url(cli.database_url.as_deref())
+                        .unwrap_or_default();
+                    if !dry_run && database_url.is_empty() {
+                        anyhow::bail!("DATABASE_URL not set. Use -d flag, set DATABASE_URL env var, or add to pgcrate.toml");
+                    }
                     commands::seed_run(&database_url, &config, seeds, dry_run, cli.quiet).await?;
                 }
                 SeedCommands::List => {
@@ -1001,7 +1169,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 }
                 SeedCommands::Validate { seeds } => {
                     // DATABASE_URL is optional for validate - it only validates files
-                    // If provided, it also checks database connection and schema existence
+                    // If provided, it also checks database connection and target tables
                     let database_url = config
                         .get_database_url(cli.database_url.as_deref())
                         .unwrap_or_default();
@@ -1083,6 +1251,14 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
             )
             .await?;
         }
+        Commands::Status => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let database_url = config
+                .get_database_url(cli.database_url.as_deref())
+                .context("DATABASE_URL not set")?;
+            commands::status(&database_url, &config, output).await?;
+        }
         cmd => {
             // Load config file for other commands
             let config =
@@ -1152,6 +1328,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 | Commands::Model { .. }
                 | Commands::Init { .. }
                 | Commands::Doctor { .. }
+                | Commands::Sql { .. }
                 | Commands::Db { .. }
                 | Commands::Snapshot { .. }
                 | Commands::Reset { .. }
@@ -1160,7 +1337,8 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 | Commands::Bootstrap { .. }
                 | Commands::Extension { .. }
                 | Commands::Role { .. }
-                | Commands::Grants { .. } => unreachable!(),
+                | Commands::Grants { .. }
+                | Commands::Status => unreachable!(),
             }
         }
     }

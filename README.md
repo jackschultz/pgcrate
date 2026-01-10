@@ -60,12 +60,12 @@ Load reference data from CSV or SQL files:
 ```bash
 pgcrate seed list             # Show available seeds
 pgcrate seed run              # Load all seeds
-pgcrate seed run statuses     # Load specific seed
+pgcrate seed run public.statuses  # Load specific seed
 pgcrate seed validate         # Check seed files for errors
 pgcrate seed diff             # Compare seeds to database
 ```
 
-Seeds are CSV or SQL files in the `seeds/` directory. CSV files support type inference or explicit schemas via `.schema.toml` sidecar files.
+Seeds are CSV or SQL files under `seeds/<schema>/` (for example, `seeds/public/statuses.csv`). CSV files support type inference or explicit schemas via `.schema.toml` sidecar files (for example, `seeds/public/statuses.schema.toml`).
 
 ### Models
 
@@ -74,6 +74,7 @@ SQL transformations with dependency tracking:
 ```bash
 pgcrate model run             # Run all models in DAG order
 pgcrate model run -s tag:daily  # Run models with specific tag
+pgcrate model run --init      # Create models/ if missing
 pgcrate model compile         # Compile to target/compiled/
 pgcrate model test            # Run data tests
 pgcrate model docs            # Generate markdown documentation
@@ -82,6 +83,7 @@ pgcrate model lint deps       # Check dependency declarations
 pgcrate model lint qualify    # Check for unqualified table references
 pgcrate model check           # Run all lint checks
 pgcrate model init            # Initialize models directory
+pgcrate model new public.user_order_summary  # Scaffold a model file
 ```
 
 Models support three materializations: `view`, `table`, and `incremental`. Define tests directly in SQL comments:
@@ -194,9 +196,6 @@ url = "postgres://localhost/myapp_dev"  # Optional, env var preferred
 [model]
 sources = ["app.users", "app.orders"]  # Tables models can reference
 
-[seeds]
-schema = "seeds"  # Target schema for CSV seeds
-
 [tools]
 pg_dump = "/opt/homebrew/opt/postgresql@18/bin/pg_dump"  # Match Docker version
 ```
@@ -229,8 +228,9 @@ DROP TABLE users;
 | `pgcrate generate` | Generate migration from existing DB |
 | `pgcrate describe <table>` | Show table details |
 | `pgcrate diff` | Compare two databases |
+| `pgcrate sql` | Run ad-hoc SQL (alias: `query`) |
 | `pgcrate seed <cmd>` | List, run, validate, or diff seed data |
-| `pgcrate model <cmd>` | Run, compile, test, lint, or graph models |
+| `pgcrate model <cmd>` | Run, compile, test, lint, graph, new, or show models |
 | `pgcrate doctor` | Run health checks |
 | `pgcrate bootstrap` | Setup environment with anonymized data from source |
 | `pgcrate snapshot <cmd>` | Save (with profiles), restore, list, or delete snapshots |

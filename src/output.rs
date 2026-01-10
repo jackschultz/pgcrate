@@ -212,6 +212,19 @@ impl From<&crate::diff::DiffSummary> for DiffSummaryJson {
     }
 }
 
+/// JSON success response wrapper for describe command
+#[derive(Debug, Serialize)]
+pub struct DescribeResponse {
+    pub ok: bool,
+    pub schema: String,
+    pub name: String,
+    pub table: crate::describe::TableDescribe,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dependents: Option<crate::describe::Dependents>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dependencies: Option<crate::describe::Dependencies>,
+}
+
 // =============================================================================
 // Meta UX JSON Response Types (--help, --version, --help-llm)
 // =============================================================================

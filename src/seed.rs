@@ -18,14 +18,22 @@ pub enum SeedType {
 /// A discovered seed file
 #[derive(Debug, Clone)]
 pub struct SeedFile {
-    /// Name of the seed (filename without extension)
-    pub name: String,
+    /// PostgreSQL schema name inferred from directory name
+    pub schema: String,
+    /// Seed name (usually the target table name), inferred from filename without extension
+    pub table: String,
     /// Full path to the seed file
     pub path: PathBuf,
     /// Type of seed (CSV or SQL)
     pub seed_type: SeedType,
     /// Path to schema file if it exists (for CSV seeds)
     pub schema_path: Option<PathBuf>,
+}
+
+impl SeedFile {
+    pub fn qualified_name(&self) -> String {
+        format!("{}.{}", self.schema, self.table)
+    }
 }
 
 /// A column definition (from inference or schema file)
@@ -50,10 +58,12 @@ pub struct SeedSchema {
 /// Parsed CSV seed ready for loading
 #[derive(Debug)]
 pub struct ParsedCsvSeed {
+    pub schema: String,
+    pub table: String,
     pub name: String,
     pub columns: Vec<SeedColumn>,
     pub rows: Vec<Vec<Option<String>>>,
-    pub schema: Option<SeedSchema>,
+    pub schema_def: Option<SeedSchema>,
     /// Raw CSV content for COPY loading
     pub csv_content: String,
 }
@@ -61,6 +71,8 @@ pub struct ParsedCsvSeed {
 /// Parsed SQL seed
 #[derive(Debug)]
 pub struct ParsedSqlSeed {
+    pub schema: String,
+    pub table: String,
     pub name: String,
     pub sql: String,
 }
@@ -80,6 +92,20 @@ impl ParsedSeed {
         }
     }
 
+    pub fn schema(&self) -> &str {
+        match self {
+            ParsedSeed::Csv(s) => &s.schema,
+            ParsedSeed::Sql(s) => &s.schema,
+        }
+    }
+
+    pub fn table(&self) -> &str {
+        match self {
+            ParsedSeed::Csv(s) => &s.table,
+            ParsedSeed::Sql(s) => &s.table,
+        }
+    }
+
     pub fn row_count(&self) -> Option<usize> {
         match self {
             ParsedSeed::Csv(s) => Some(s.rows.len()),
@@ -96,58 +122,75 @@ pub fn discover_seeds(seeds_dir: &Path) -> Result<Vec<SeedFile>> {
         return Ok(seeds);
     }
 
-    for entry in fs::read_dir(seeds_dir)
+    for schema_entry in fs::read_dir(seeds_dir)
         .with_context(|| format!("read seeds directory: {}", seeds_dir.display()))?
     {
-        let entry = entry?;
-        let path = entry.path();
-
-        // Skip directories and schema files
-        if path.is_dir() {
+        let schema_entry = schema_entry?;
+        let schema_dir = schema_entry.path();
+        if !schema_dir.is_dir() {
             continue;
         }
 
-        let ext = path.extension().and_then(|e| e.to_str());
-        let stem = path.file_stem().and_then(|s| s.to_str());
+        let schema = match schema_dir.file_name().and_then(|s| s.to_str()) {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => continue,
+        };
 
-        // Skip .schema.toml files (they're sidecars, not seeds)
-        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            if name.ends_with(".schema.toml") {
+        for entry in fs::read_dir(&schema_dir)
+            .with_context(|| format!("read schema seed directory: {}", schema_dir.display()))?
+        {
+            let entry = entry?;
+            let path = entry.path();
+
+            if path.is_dir() {
                 continue;
             }
-        }
 
-        match (ext, stem) {
-            (Some("csv"), Some(name)) => {
-                // Check for schema sidecar
-                let schema_path = seeds_dir.join(format!("{}.schema.toml", name));
-                seeds.push(SeedFile {
-                    name: name.to_string(),
-                    path,
-                    seed_type: SeedType::Csv,
-                    schema_path: if schema_path.exists() {
-                        Some(schema_path)
-                    } else {
-                        None
-                    },
-                });
+            let ext = path.extension().and_then(|e| e.to_str());
+            let stem = path.file_stem().and_then(|s| s.to_str());
+
+            // Skip .schema.toml files (they're sidecars, not seeds)
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if name.ends_with(".schema.toml") {
+                    continue;
+                }
             }
-            (Some("sql"), Some(name)) => {
-                seeds.push(SeedFile {
-                    name: name.to_string(),
-                    path,
-                    seed_type: SeedType::Sql,
-                    schema_path: None,
-                });
-            }
-            _ => {
-                // Skip unknown file types
+
+            match (ext, stem) {
+                (Some("csv"), Some(table)) => {
+                    let schema_path = schema_dir.join(format!("{}.schema.toml", table));
+                    seeds.push(SeedFile {
+                        schema: schema.clone(),
+                        table: table.to_string(),
+                        path,
+                        seed_type: SeedType::Csv,
+                        schema_path: if schema_path.exists() {
+                            Some(schema_path)
+                        } else {
+                            None
+                        },
+                    });
+                }
+                (Some("sql"), Some(table)) => {
+                    seeds.push(SeedFile {
+                        schema: schema.clone(),
+                        table: table.to_string(),
+                        path,
+                        seed_type: SeedType::Sql,
+                        schema_path: None,
+                    });
+                }
+                _ => {
+                    // Skip unknown file types
+                }
             }
         }
     }
 
-    // Sort by name for consistent ordering (will be reordered by dependencies later)
-    seeds.sort_by(|a, b| a.name.cmp(&b.name));
+    // Sort by schema, then table for consistent ordering
+    seeds.sort_by(|a, b| {
+        (a.schema.as_str(), a.table.as_str()).cmp(&(b.schema.as_str(), b.table.as_str()))
+    });
 
     Ok(seeds)
 }
@@ -156,25 +199,32 @@ pub fn discover_seeds(seeds_dir: &Path) -> Result<Vec<SeedFile>> {
 pub fn parse_seed(seed_file: &SeedFile) -> Result<ParsedSeed> {
     match seed_file.seed_type {
         SeedType::Csv => {
-            let parsed = parse_csv_seed(&seed_file.path, seed_file.schema_path.as_deref())?;
+            let parsed = parse_csv_seed(
+                &seed_file.path,
+                seed_file.schema_path.as_deref(),
+                &seed_file.schema,
+                &seed_file.table,
+            )?;
             Ok(ParsedSeed::Csv(parsed))
         }
         SeedType::Sql => {
-            let parsed = parse_sql_seed(&seed_file.path)?;
+            let parsed = parse_sql_seed(&seed_file.path, &seed_file.schema, &seed_file.table)?;
             Ok(ParsedSeed::Sql(parsed))
         }
     }
 }
 
 /// Parse a CSV seed file with optional schema sidecar
-pub fn parse_csv_seed(path: &Path, schema_path: Option<&Path>) -> Result<ParsedCsvSeed> {
-    let name = path
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+pub fn parse_csv_seed(
+    path: &Path,
+    schema_path: Option<&Path>,
+    schema: &str,
+    table: &str,
+) -> Result<ParsedCsvSeed> {
+    let name = format!("{}.{}", schema, table);
 
     // Load schema file if it exists
-    let schema = if let Some(sp) = schema_path {
+    let seed_schema = if let Some(sp) = schema_path {
         let content = fs::read_to_string(sp)
             .with_context(|| format!("read schema file: {}", sp.display()))?;
         let parsed: SeedSchema = toml::from_str(&content)
@@ -229,7 +279,7 @@ pub fn parse_csv_seed(path: &Path, schema_path: Option<&Path>) -> Result<ParsedC
         .enumerate()
         .map(|(i, name)| {
             // Check schema for explicit type
-            let pg_type = schema
+            let pg_type = seed_schema
                 .as_ref()
                 .and_then(|s| s.columns.get(name).cloned())
                 .unwrap_or_else(|| {
@@ -248,25 +298,29 @@ pub fn parse_csv_seed(path: &Path, schema_path: Option<&Path>) -> Result<ParsedC
         .collect();
 
     Ok(ParsedCsvSeed {
+        schema: schema.to_string(),
+        table: table.to_string(),
         name,
         columns,
         rows,
-        schema,
+        schema_def: seed_schema,
         csv_content,
     })
 }
 
 /// Parse a SQL seed file
-pub fn parse_sql_seed(path: &Path) -> Result<ParsedSqlSeed> {
-    let name = path
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+pub fn parse_sql_seed(path: &Path, schema: &str, table: &str) -> Result<ParsedSqlSeed> {
+    let name = format!("{}.{}", schema, table);
 
     let sql =
         fs::read_to_string(path).with_context(|| format!("read SQL seed: {}", path.display()))?;
 
-    Ok(ParsedSqlSeed { name, sql })
+    Ok(ParsedSqlSeed {
+        schema: schema.to_string(),
+        table: table.to_string(),
+        name,
+        sql,
+    })
 }
 
 /// Infer PostgreSQL type from a sample of string values
@@ -410,6 +464,52 @@ fn is_json(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_discover_seeds_schema_subdirs() {
+        let tmp = TempDir::new().unwrap();
+        let seeds_dir = tmp.path();
+
+        // Root-level seeds are ignored (schema subdir layout required).
+        fs::write(seeds_dir.join("root.csv"), "id\n1\n").unwrap();
+
+        let public_dir = seeds_dir.join("public");
+        fs::create_dir_all(&public_dir).unwrap();
+        fs::write(public_dir.join("users.csv"), "id\n1\n").unwrap();
+        fs::write(
+            public_dir.join("users.schema.toml"),
+            "primary_key = [\"id\"]\n",
+        )
+        .unwrap();
+        fs::write(public_dir.join("demo_users.sql"), "SELECT 1;\n").unwrap();
+
+        let seeds = discover_seeds(seeds_dir).unwrap();
+        let names: Vec<String> = seeds.iter().map(|s| s.qualified_name()).collect();
+
+        assert!(names.contains(&"public.users".to_string()));
+        assert!(names.contains(&"public.demo_users".to_string()));
+        assert!(!names.iter().any(|n| n.ends_with(".root") || n == "root"));
+
+        let users = seeds
+            .iter()
+            .find(|s| s.schema == "public" && s.table == "users")
+            .unwrap();
+        assert_eq!(users.seed_type, SeedType::Csv);
+        assert!(users.schema_path.is_some());
+        assert_eq!(
+            users.schema_path.as_ref().unwrap(),
+            &public_dir.join("users.schema.toml")
+        );
+
+        let demo_users = seeds
+            .iter()
+            .find(|s| s.schema == "public" && s.table == "demo_users")
+            .unwrap();
+        assert_eq!(demo_users.seed_type, SeedType::Sql);
+        assert!(demo_users.schema_path.is_none());
+    }
 
     #[test]
     fn test_infer_type_boolean() {

@@ -8,6 +8,7 @@
 use crate::sql::quote_ident;
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
+use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use tokio_postgres::Client;
 
@@ -87,7 +88,7 @@ pub struct Column {
     pub is_primary_key: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum IdentityType {
     Always,
     ByDefault,
@@ -113,7 +114,7 @@ pub struct View {
     pub definition: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Index {
     pub schema: String,
     pub table_name: String,
@@ -121,7 +122,7 @@ pub struct Index {
     pub definition: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Constraint {
     pub schema: String,
     pub table_name: String,
@@ -130,7 +131,7 @@ pub struct Constraint {
     pub definition: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum ConstraintType {
     /// Primary key constraint. Note: For generate/diff commands, PKs are typically
     /// handled via PrimaryKey struct on Table for inline column definitions.
@@ -142,7 +143,7 @@ pub enum ConstraintType {
     Exclusion,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Trigger {
     pub schema: String,
     pub table_name: String,

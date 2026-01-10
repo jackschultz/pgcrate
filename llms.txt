@@ -6,6 +6,30 @@ pgcrate is a PostgreSQL companion tool for teams not using Rails or Django.
 It provides migrations, seeds, models, introspection, diffing, health checks, anonymization, and snapshots.
 All using raw SQL files (no ORMs) with atomic, reversible operations.
 
+## POSTGRESQL VERSION REQUIREMENTS
+
+pgcrate works with PostgreSQL 14+, with some features requiring newer versions:
+
+| Feature | Minimum PG Version | Notes |
+|---------|-------------------|-------|
+| Migrations | 14+ | Basic DDL support |
+| Seeds | 14+ | COPY command |
+| Models (view/table) | 14+ | CREATE VIEW/TABLE AS |
+| Models (incremental) | 9.5+ | INSERT ON CONFLICT (9.5-16), MERGE (17+) |
+| Describe | 14+ | pg_catalog queries |
+| Snapshots | 14+ | pg_dump |
+
+### Checking Your Version
+```bash
+psql -c "SELECT version();"
+# or
+pgcrate doctor  # Shows connected PG version
+```
+
+### If Using PostgreSQL < 17
+Incremental models use INSERT ON CONFLICT (upsert) on PostgreSQL 9.5-16, and MERGE on PostgreSQL 17+.
+Both approaches work identically - the PostgreSQL version is detected automatically.
+
 ## CONFIGURATION
 
 ### Environment Variables
@@ -38,9 +62,6 @@ exclude_schemas = []      # Exclude these schemas
 [model]
 sources = ["app.users", "app.orders"]  # Tables that models can reference
 
-[seeds]
-schema = "seeds"          # Target schema for CSV seeds
-
 [tools]
 pg_dump = "/path/to/pg_dump"       # Custom pg_dump path (for version matching)
 pg_restore = "/path/to/pg_restore" # Custom pg_restore path
@@ -60,6 +81,41 @@ psql = "/path/to/psql"             # Custom psql path
 - **Path traversal protection**: Config paths cannot contain `../` sequences
 - **Default location**: `db/migrations/` in current directory
 
+## QUICK REFERENCE - COMMON WORKFLOWS
+
+**Check what needs to run:**
+```bash
+pgcrate status              # Migration status (alias for migrate status)
+pgcrate model status        # Which models are synced/missing vs database
+pgcrate model graph         # Show dependency DAG with execution layers
+```
+
+**Run specific models:**
+```bash
+pgcrate model run -s analytics.daily_stats      # Run one model
+pgcrate model run -s tag:daily                  # Run models with tag
+pgcrate model run -s deps:analytics.summary     # Run model + its dependencies
+```
+
+**Preview before running:**
+```bash
+pgcrate model run --dry-run           # Show what would run
+pgcrate model show analytics.foo      # Show compiled SQL for a model
+pgcrate model compile                 # Compile all to target/compiled/
+```
+
+**Create new models:**
+```bash
+pgcrate model new analytics.user_stats                      # New view model
+pgcrate model new analytics.daily_orders --materialized table
+pgcrate model new analytics.events --materialized incremental
+```
+
+**Move/rename models:**
+```bash
+pgcrate model move analytics.old_name reporting.new_name --drop-old
+```
+
 ## COMMANDS
 
 ### Project Initialization
@@ -70,6 +126,9 @@ pgcrate init
 
 # Non-interactive with defaults (migrations only)
 pgcrate init -y
+
+# Non-interactive auto-detection (when stdin is not a TTY)
+# pgcrate behaves as if -y was passed.
 
 # Non-interactive with seeds and models
 pgcrate init -y --seeds --models
@@ -94,7 +153,6 @@ pgcrate init --force
 - `--models-dir <path>`: Models directory (default: `models`)
 - `--seeds`: Enable seeds
 - `--seeds-dir <path>`: Seeds directory (default: `seeds`)
-- `--seeds-schema <name>`: Schema for CSV seeds (default: `seeds`)
 
 **Behavior:**
 - Creates `pgcrate.toml` with configured paths
@@ -106,19 +164,24 @@ pgcrate init --force
 
 ```bash
 # Create new migration
-pgcrate new create_users
-pgcrate new add_email_column --with-down  # Also create .down.sql file
+pgcrate migrate new create_users
+pgcrate migrate new add_email_column --with-down  # Also create .down.sql file
 
 # Run pending migrations
-pgcrate up
-pgcrate up --dry-run  # Preview only
+pgcrate migrate up
+pgcrate migrate up --dry-run  # Preview only
 
 # Roll back migrations
-pgcrate down --steps 1 --yes
-pgcrate down --steps 3 --dry-run  # Preview rollback
+pgcrate migrate down --steps 1 --yes
+pgcrate migrate down --steps 3 --dry-run  # Preview rollback
 
 # Check migration status
-pgcrate status
+pgcrate migrate status
+
+**Interactivity and confirmations:**
+- `migrate up` / `migrate new` are non-interactive (accept `-y/--yes` as a no-op for scripting consistency; no top-level `up/new` aliases)
+- `migrate down` requires `--yes`
+- `migrate baseline` requires `--yes`
 
 # One-command health check (connection, schema, migrations, config)
 pgcrate doctor
@@ -132,6 +195,27 @@ pgcrate doctor --quiet     # No output, exit code only
 - `0`: success (including warnings)
 - `1`: errors found (or warnings with `--strict`)
 - `2`: fatal error (connection/config/CLI usage)
+
+### SQL Command
+
+```bash
+# Run a single query (-c flag for psql compatibility)
+pgcrate sql -c "SELECT 1 AS ok"
+
+# Alias
+pgcrate query -c "SELECT COUNT(*) FROM public.users"
+
+# Read SQL from stdin
+echo "SELECT 1" | pgcrate sql
+cat check.sql | pgcrate sql
+
+# Refuse writes by default (use --allow-write to run INSERT/UPDATE/DDL)
+pgcrate sql -c "INSERT INTO public.users(id) VALUES (1)"          # errors
+pgcrate sql -c "INSERT INTO public.users(id) VALUES (1)" --allow-write
+
+# JSON output
+pgcrate --json sql -c "SELECT 1 AS ok"
+```
 
 ### Generate Commands
 
@@ -179,7 +263,7 @@ pgcrate seed run
 pgcrate seed run --dry-run  # Preview only
 
 # Load specific seeds
-pgcrate seed run task_statuses priorities
+pgcrate seed run public.task_statuses public.priorities
 
 # Validate seed files (parse without loading)
 pgcrate seed validate
@@ -193,7 +277,7 @@ pgcrate seed diff
 - **SQL seeds**: Raw SQL files for complex insert logic (stored procedures, generate_series, etc.)
 - **Schema sidecar files**: Optional `.schema.toml` files for explicit column types and primary keys
 
-**CSV Seed Example** (`seeds/task_statuses.csv`):
+**CSV Seed Example** (`seeds/public/task_statuses.csv`):
 ```csv
 code,label,sort_order,is_terminal
 todo,To Do,1,false
@@ -201,7 +285,7 @@ in_progress,In Progress,2,false
 done,Done,3,true
 ```
 
-**Schema Sidecar Example** (`seeds/task_statuses.schema.toml`):
+**Schema Sidecar Example** (`seeds/public/task_statuses.schema.toml`):
 ```toml
 primary_key = ["code"]
 
@@ -212,17 +296,19 @@ sort_order = "integer"
 is_terminal = "boolean"
 ```
 
-**SQL Seed Example** (`seeds/demo_users.sql`):
+**SQL Seed Example** (`seeds/public/demo_users.sql`):
 ```sql
-CREATE TABLE IF NOT EXISTS seeds.demo_users (...);
-TRUNCATE seeds.demo_users RESTART IDENTITY;
-INSERT INTO seeds.demo_users (email, name)
+-- SQL seeds run as-is; prefer schema-qualified writes.
+TRUNCATE public.demo_users RESTART IDENTITY;
+INSERT INTO public.demo_users (email, name)
 SELECT 'user' || n || '@example.com', 'User ' || n
 FROM generate_series(1, 100) AS n;
 ```
 
 **Seed Behavior:**
-- Seeds load into the configured schema (default: `seeds`)
+- Seeds load into existing tables by name (no automatic table creation)
+- CSV seeds error if the target table is missing (create it with a migration first)
+- Seed files are stored under `seeds/<schema>/` and load into `<schema>.<table>` automatically
 - CSV seeds use PostgreSQL COPY protocol for fast bulk loading
 - Foreign key constraints are disabled during load (DISABLE TRIGGER ALL)
 - Seeds are idempotent: tables are truncated before loading
@@ -232,7 +318,8 @@ FROM generate_series(1, 100) AS n;
 ```bash
 # Run all models in DAG order
 pgcrate model run
-pgcrate model run --dry-run  # Preview execution plan
+pgcrate model run --dry-run  # Print compiled SQL without executing
+pgcrate model run --init     # Create models/ if missing
 
 # Run with selectors
 pgcrate model run -s marts.task_metrics     # Specific model
@@ -241,9 +328,11 @@ pgcrate model run -s deps:marts.user_stats  # Model + upstream deps
 
 # Compile models to target/compiled/
 pgcrate model compile
+pgcrate model compile --init
 
 # Run data tests
 pgcrate model test
+pgcrate model test --init
 pgcrate model test -s marts.user_activity  # Test specific model
 
 # Lint dependency declarations
@@ -253,7 +342,28 @@ pgcrate model lint deps --fix  # Auto-fix deps line
 # Show dependency graph
 pgcrate model graph
 pgcrate model graph --format mermaid  # Export as Mermaid diagram
+
+# Create a new model file
+pgcrate model new analytics.user_stats
+pgcrate model new analytics.daily_order_stats --materialized incremental
+
+# Model init is optional: `model new` creates directories automatically.
+pgcrate model init
+pgcrate model init -y
+
+# Show compiled SQL for a model (including incremental MERGE)
+pgcrate model show analytics.daily_order_stats
+pgcrate model show analytics.daily_order_stats --json
+
+# Check model sync status vs database
+pgcrate model status
+pgcrate model status --json
 ```
+
+**Model File Layout:**
+- Models live at `models/<schema>/<name>.sql`
+- `<schema>.<name>` is the database relation created/updated when you run the model
+- Target schemas are auto-created if they don't exist (e.g., running `analytics.user_stats` creates the `analytics` schema automatically)
 
 **Model File Format:**
 ```sql
@@ -279,10 +389,213 @@ GROUP BY u.id
 - `-- tests: test_type(args)` - Data quality tests
 - `-- description: text` - Model documentation
 
-**Materialization Types:**
-- `view`: CREATE OR REPLACE VIEW (lightweight, always current)
-- `table`: DROP + CREATE TABLE AS (heavier, point-in-time snapshot)
-- `incremental`: Merge/upsert based on unique_key (append-only data)
+## Materialization Types
+
+Models support three materialization types via the `-- materialized:` header:
+
+### view (default)
+- Creates a PostgreSQL VIEW
+- No data stored - query runs on each access
+- Best for: light transformations, always-fresh data
+- Example: `-- materialized: view`
+
+### table
+- Creates a PostgreSQL TABLE using CREATE TABLE AS
+- Data stored physically, rebuilt on each run
+- Best for: heavy aggregations, frequently queried data
+- Example: `-- materialized: table`
+
+### incremental
+- Creates a TABLE with upsert on subsequent runs
+- Requires `-- unique_key:` header to identify rows
+- Only new/changed rows are processed after first run
+- Best for: append-only data, large datasets
+- Works on PostgreSQL 9.5+ (uses INSERT ON CONFLICT or MERGE depending on version)
+- Example:
+  ```sql
+  -- materialized: incremental
+  -- unique_key: id
+  -- deps: public.events
+  SELECT id, event_type, count(*) as cnt
+  FROM public.events
+  GROUP BY id, event_type
+  ```
+
+### Choosing a Materialization
+
+**Decision tree:**
+```
+Is query performance critical?
+├─ No → view (always fresh, no storage)
+└─ Yes → Is data small enough to rebuild each run?
+         ├─ Yes → table (fast queries, simple)
+         └─ No → Does data have a natural unique key?
+                 ├─ Yes → incremental (efficient updates)
+                 └─ No → table with partitioning
+```
+
+**Quick reference:**
+| Need | Use |
+|------|-----|
+| Always fresh, light query | view |
+| Fast reads, can rebuild | table |
+| Large data, incremental updates | incremental |
+
+**Common patterns by model layer:**
+| Layer | Typical Materialization | Why |
+|-------|------------------------|-----|
+| staging | view | Simple transforms, always current |
+| intermediate | view or table | Depends on query complexity |
+| marts/facts | incremental | Large, append-heavy, has keys |
+| marts/dimensions | table | Small, full refresh OK |
+| aggregations | table or incremental | Depends on size and rebuild time |
+
+**Performance considerations:**
+- **view**: Zero storage, but query runs every time. Slow for complex joins/aggregations.
+- **table**: Fast reads, but DROP+CREATE on every run. OK for small-medium data.
+- **incremental**: Fast updates, but requires unique_key. Best for large append-only data.
+
+## Incremental Models
+
+Incremental models materialize as a **TABLE** and are updated via upsert on subsequent runs.
+
+**Header requirements:**
+- `-- materialized: incremental`
+- `-- unique_key: col1, col2` (required; used as the merge key and primary key)
+
+### How unique_key Works
+
+The `unique_key` directive serves two purposes:
+
+1. **Creates PRIMARY KEY constraint** - On first run, pgcrate creates the table and adds `PRIMARY KEY (unique_key)`. This ensures data integrity and enables efficient upserts.
+
+2. **Defines merge/upsert behavior** - On subsequent runs:
+   - PostgreSQL 17+: Uses `MERGE INTO ... ON t.key = s.key`
+   - PostgreSQL 9.5-16: Uses `INSERT ... ON CONFLICT (key) DO UPDATE SET ...`
+
+**Composite keys** are supported:
+```sql
+-- unique_key: user_id, date
+```
+
+**What happens when source data changes:**
+- Matching key exists: Row is **updated** with new values
+- New key: Row is **inserted**
+- Key deleted from source: Row is **NOT deleted** (orphaned)
+
+To handle deletes, either:
+- Use `--full-refresh` periodically to rebuild
+- Add explicit delete logic in your model
+
+### Execution Semantics
+
+- **First run** (or `--full-refresh`): Creates table with `CREATE TABLE AS`, adds PRIMARY KEY on `unique_key`
+- **Subsequent runs**: Upserts rows - inserts new keys, updates existing keys
+
+### Incremental Filtering (Optional)
+
+By default, incremental models scan all source data on every run. For large datasets, you can filter to only process new/changed rows using one of these approaches:
+
+**Level 1: No filtering (default)**
+```sql
+-- materialized: incremental
+-- unique_key: user_id
+
+SELECT user_id, COUNT(*) FROM orders GROUP BY user_id
+```
+Full scan every run, merge by key. Simple and correct, good for smaller datasets.
+
+**Level 2: Watermark filtering (recommended for most cases)**
+```sql
+-- materialized: incremental
+-- unique_key: id
+-- watermark: updated_at
+
+SELECT id, name, updated_at FROM source
+```
+pgcrate automatically generates: `WHERE updated_at > (SELECT MAX(updated_at) FROM target_table)`
+- First run / `--full-refresh`: no filter, loads all data
+- Subsequent runs: only rows newer than max watermark
+- Requires index on watermark column for performance
+
+**Watermark with lookback (handles late-arriving data):**
+```sql
+-- watermark: updated_at
+-- lookback: 2 days
+```
+Generates: `WHERE updated_at > (SELECT MAX(updated_at) - interval '2 days' FROM target)`
+
+**Compound watermark (for tie-breaking):**
+```sql
+-- watermark: updated_at, id
+```
+Uses row comparison: `(updated_at, id) > (SELECT MAX(updated_at), MAX(id) FROM target)`
+
+**Level 3: Custom filter (for complex predicates)**
+```sql
+-- materialized: incremental
+-- unique_key: id
+-- incremental_filter: created_at > current_date - interval '7 days'
+
+SELECT id, data, created_at FROM source
+```
+Appends the predicate as a WHERE clause on subsequent runs.
+- Mutually exclusive with `-- watermark`
+- Use when watermark pattern doesn't fit (sliding windows, date-based partitions, etc.)
+
+**Level 4: Full control with @base/@incremental sections**
+```sql
+-- materialized: incremental
+-- unique_key: id
+
+-- @base
+SELECT * FROM events
+
+-- @incremental
+SELECT * FROM events WHERE id > (SELECT MAX(id) FROM analytics.daily_events)
+```
+Use when first-run and incremental queries are structurally different.
+- `-- @base`: runs on first execution or `--full-refresh`
+- `-- @incremental`: runs on subsequent executions
+- `${this}` is NOT supported; use the full target table name
+
+**Choosing an approach:**
+| Scenario | Use |
+|----------|-----|
+| Small dataset, simple logic | No filtering (Level 1) |
+| Large dataset with timestamp | `-- watermark: updated_at` (Level 2) |
+| Late-arriving data | `-- watermark` + `-- lookback` |
+| Sliding window / date partition | `-- incremental_filter` (Level 3) |
+| Structurally different queries | `@base` / `@incremental` (Level 4) |
+
+**Best practices:**
+- Ensure `unique_key` is truly unique in your source query (duplicates cause errors)
+- Match `unique_key` to the grain of your model output
+- Add index on watermark column for performance
+- Use `-- lookback` if source data can be updated after initial insert
+
+**Example (incremental):**
+```sql
+-- materialized: incremental
+-- unique_key: day
+-- deps: staging.orders
+-- tests: not_null(day), unique(day)
+
+SELECT
+  date_trunc('day', created_at)::date AS day,
+  COUNT(*) AS order_count
+FROM staging.orders
+GROUP BY 1
+```
+
+**MERGE shape (simplified):**
+```sql
+MERGE INTO analytics.daily_order_stats AS t
+USING ( <model query> ) AS s
+ON t.day = s.day
+WHEN MATCHED THEN UPDATE SET ...
+WHEN NOT MATCHED THEN INSERT (...) VALUES (...);
+```
 
 **Test Types:**
 - `not_null(column)` - Column has no NULL values
@@ -296,6 +609,43 @@ GROUP BY u.id
 - `deps:model` - Model plus all upstream dependencies
 - `downstream:model` - Model plus all downstream dependents
 - `tree:model` - Full lineage (upstream + downstream)
+
+**Quickstart model layers (common pattern):**
+- `staging`: thin views over raw/source tables (rename columns, type casts)
+- `intermediate`: reusable joins/transforms
+- `marts`: final business-facing tables/views
+
+## Model Refactoring
+
+pgcrate does NOT automatically clean up database objects when model files are deleted.
+To refactor models, follow these patterns:
+
+### Rename a Model (same schema)
+1. Create new model file: `models/analytics/new_name.sql`
+2. Copy content from old file
+3. Run: `pgcrate model run -s analytics.new_name`
+4. Drop old object: `psql -c "DROP VIEW analytics.old_name CASCADE"`
+5. Delete old file: `rm models/analytics/old_name.sql`
+6. Update any downstream deps to reference new name
+
+### Move to Different Schema
+1. Create new model file: `models/reporting/model_name.sql`
+2. Copy content, update any schema-specific references
+3. Run: `pgcrate model run -s reporting.model_name`
+4. Drop old object: `psql -c "DROP VIEW analytics.model_name CASCADE"`
+5. Delete old file: `rm models/analytics/model_name.sql`
+
+### Change Materialization (view to table)
+1. Edit model file: change `-- materialized: view` to `-- materialized: table`
+2. Run: `pgcrate model run -s schema.model_name`
+   (pgcrate automatically handles dropping view and creating table)
+
+### Check for Orphaned Objects
+Objects in database without model files:
+```bash
+psql -c "SELECT schemaname, viewname FROM pg_views WHERE schemaname NOT IN ('pg_catalog', 'information_schema')"
+# Compare against: ls models/*/*.sql
+```
 
 ## FILE STRUCTURE
 
@@ -314,9 +664,10 @@ project/
 │       ├── user_metrics.sql
 │       └── order_summary.sql
 └── seeds/
-    ├── task_statuses.csv
-    ├── task_statuses.schema.toml
-    └── demo_data.sql
+    └── public/
+        ├── task_statuses.csv
+        ├── task_statuses.schema.toml
+        └── demo_data.sql
 ```
 
 ## MIGRATION FILE NAMING AND ORDERING
@@ -400,8 +751,15 @@ When `--json` is specified, pgcrate outputs machine-readable JSON to stdout.
 ### Supported Commands
 
 Currently, `--json` is supported for these commands:
-- `status` - Migration status
+- `describe` - Table introspection
 - `diff` - Schema comparison
+- `doctor` - Health checks
+- `model show` - Show compiled SQL for a model
+- `model status` - Model sync status
+- `snapshot list` - List snapshots
+- `snapshot info` - Snapshot details
+- `sql` - SQL query results
+- `status` - Migration status (alias for `migrate status`)
 
 For unsupported commands, `--json` returns a JSON error: `"--json not supported for '<cmd>' yet"`.
 
@@ -410,7 +768,7 @@ For unsupported commands, `--json` returns a JSON error: `"--json not supported 
 - **stdout**: Data (the command's "answer") - results, JSON responses
 - **stderr**: Diagnostics (progress messages, debug output) - suppressed in JSON mode
 
-This separation allows scripts to pipe stdout (`pgcrate status --json | jq .`) without diagnostics polluting the data stream. In JSON mode, pgcrate emits no app-level output to stderr (external libraries or cargo may still emit warnings).
+This separation allows scripts to pipe stdout (`pgcrate migrate status --json | jq .`) without diagnostics polluting the data stream. In JSON mode, pgcrate emits no app-level output to stderr (external libraries or cargo may still emit warnings).
 
 ### JSON Error Schema
 
@@ -431,6 +789,29 @@ On error with `--json`, output goes to stdout with non-zero exit code:
 - `message` is always present and non-empty
 
 ### JSON Success Schemas
+
+#### describe command
+
+```json
+{
+  "ok": true,
+  "schema": "public",
+  "name": "users",
+  "table": {
+    "columns": [
+      {"name": "id", "data_type": "integer", "nullable": false, "is_primary_key": true, ...},
+      {"name": "email", "data_type": "text", "nullable": false, ...}
+    ],
+    "indexes": [...],
+    "constraints": [...],
+    "triggers": [...],
+    "stats": {"row_estimate": 1000, "table_size": "16 kB", ...},
+    "rls": null
+  },
+  "dependents": null,
+  "dependencies": null
+}
+```
 
 #### status command
 
@@ -509,23 +890,23 @@ In JSON mode, both exit codes 1 and 2 produce valid JSON error output to stdout.
 
 ```bash
 # Check migration status as JSON
-pgcrate status --json
+pgcrate migrate status --json
 
 # Parse with jq
-pgcrate status --json | jq '.counts.pending'
+pgcrate migrate status --json | jq '.counts.pending'
 
 # Compare databases, exit 1 if different
 pgcrate diff --json --to postgres://other/db
 
 # Handle errors in scripts (no need to redirect stderr in JSON mode)
-if ! result=$(pgcrate status --json); then
+if ! result=$(pgcrate migrate status --json); then
   echo "pgcrate failed" >&2
   exit 1
 fi
 pending=$(echo "$result" | jq -r '.counts.pending')
 
 # Check for usage errors specifically
-pgcrate --json down  # Missing --steps, exits 2 with JSON error
+pgcrate --json migrate down  # Missing --steps, exits 2 with JSON error
 ```
 
 ## ERROR HANDLING
@@ -539,12 +920,12 @@ pgcrate --json down  # Missing --steps, exits 2 with JSON error
 
 ```bash
 # CI/CD pipeline
-pgcrate up --quiet
+pgcrate migrate up --quiet
 
 # Development workflow
-pgcrate new add_feature --with-down
+pgcrate migrate new add_feature --with-down
 # Edit migration files...
-pgcrate up --verbose
+pgcrate migrate up --verbose
 ```
 
 ## INTEGRATION PATTERNS
@@ -553,7 +934,7 @@ pgcrate up --verbose
 ```bash
 #!/bin/sh
 # pre-commit hook
-pgcrate up --dry-run
+pgcrate migrate up --dry-run
 ```
 
 ### Docker Integration
@@ -564,17 +945,17 @@ COPY pgcrate.toml /app/
 RUN wget -O /usr/local/bin/pgcrate https://github.com/jackschultz/pgcrate/releases/latest/download/pgcrate-linux-amd64
 RUN chmod +x /usr/local/bin/pgcrate
 ENV DATABASE_URL=postgresql://postgres:password@localhost:5432/db
-RUN pgcrate up
+RUN pgcrate migrate up
 ```
 
 ### Configuration Management
 ```bash
 # Production
-DATABASE_URL=postgresql://user:pass@prod-db:5432/prod pgcrate up --quiet
+DATABASE_URL=postgresql://user:pass@prod-db:5432/prod pgcrate migrate up --quiet
 
 # Staging
-DATABASE_URL=postgresql://user:pass@staging-db:5432/staging pgcrate up --dry-run
+DATABASE_URL=postgresql://user:pass@staging-db:5432/staging pgcrate migrate up --dry-run
 
 # Development
-pgcrate up --verbose
+pgcrate migrate up --verbose
 ```

@@ -5,8 +5,17 @@ use std::path::Path;
 
 use super::{Materialized, ModelHeader, Relation, Test};
 
-/// Parse a model file into header and body SQL
-pub fn parse_model_file(path: &Path) -> Result<(ModelHeader, String)> {
+/// Parsed model file result
+#[derive(Debug)]
+pub struct ParsedModel {
+    pub header: ModelHeader,
+    pub body_sql: String,
+    pub base_sql: Option<String>,
+    pub incremental_sql: Option<String>,
+}
+
+/// Parse a model file into header, body SQL, and optional sections
+pub fn parse_model_file(path: &Path) -> Result<ParsedModel> {
     let text =
         fs::read_to_string(path).with_context(|| format!("read model: {}", path.display()))?;
 
@@ -15,6 +24,13 @@ pub fn parse_model_file(path: &Path) -> Result<(ModelHeader, String)> {
     let mut lines = text.lines();
 
     while let Some(line) = lines.next() {
+        let trimmed = line.trim();
+        // Section markers (-- @base, -- @incremental) are part of the body, not header
+        if trimmed == "-- @base" || trimmed == "-- @incremental" {
+            body_lines.push(line);
+            body_lines.extend(lines);
+            break;
+        }
         if line.trim_start().starts_with("--") {
             header_lines.push(line);
             continue;
@@ -35,7 +51,111 @@ pub fn parse_model_file(path: &Path) -> Result<(ModelHeader, String)> {
         bail!("model body is empty: {}", path.display());
     }
 
-    Ok((header, body_sql))
+    // For incremental models, parse @base and @incremental sections
+    let (base_sql, incremental_sql) = if matches!(header.materialized, Materialized::Incremental) {
+        parse_incremental_sections(&body_sql)
+            .with_context(|| format!("parse incremental sections: {}", path.display()))?
+    } else {
+        (None, None)
+    };
+
+    Ok(ParsedModel {
+        header,
+        body_sql,
+        base_sql,
+        incremental_sql,
+    })
+}
+
+/// Parse @base and @incremental sections from model body
+///
+/// Sections are OPTIONAL for incremental models:
+/// - No sections: body_sql used as-is (simple incremental, no filtering)
+/// - @base only: explicit first-run SQL, same used for incremental
+/// - @base + @incremental: different SQL for first run vs subsequent runs
+fn parse_incremental_sections(body: &str) -> Result<(Option<String>, Option<String>)> {
+    let base_marker = "-- @base";
+    let incr_marker = "-- @incremental";
+
+    // Check if sections are used
+    let has_base = body.contains(base_marker);
+    let has_incr = body.contains(incr_marker);
+
+    // No sections = simple incremental model (Level 1)
+    // Body SQL used directly, full scan + merge by unique_key
+    if !has_base && !has_incr {
+        return Ok((None, None));
+    }
+
+    // @incremental without @base is an error
+    if has_incr && !has_base {
+        bail!("-- @incremental requires -- @base section to appear first");
+    }
+
+    // Parse sections
+    let mut base_sql: Option<String> = None;
+    let mut incremental_sql: Option<String> = None;
+    let mut current_section: Option<&str> = None;
+    let mut current_lines: Vec<&str> = Vec::new();
+
+    for line in body.lines() {
+        let trimmed = line.trim();
+        if trimmed == base_marker {
+            // Save previous section if any
+            if let Some(section) = current_section {
+                save_section(section, &current_lines, &mut base_sql, &mut incremental_sql)?;
+            }
+            current_section = Some("base");
+            current_lines.clear();
+        } else if trimmed == incr_marker {
+            if let Some(section) = current_section {
+                save_section(section, &current_lines, &mut base_sql, &mut incremental_sql)?;
+            }
+            current_section = Some("incremental");
+            current_lines.clear();
+        } else {
+            current_lines.push(line);
+        }
+    }
+
+    // Save final section
+    if let Some(section) = current_section {
+        save_section(section, &current_lines, &mut base_sql, &mut incremental_sql)?;
+    }
+
+    // Validate @base has content
+    if let Some(ref sql) = base_sql {
+        if sql.trim().is_empty() {
+            bail!("-- @base section is empty");
+        }
+    }
+
+    // Validate ${this} not used in @base (would fail on first run)
+    if let Some(ref sql) = base_sql {
+        if sql.contains("${this}") {
+            bail!(
+                "${{this}} in @base section will fail on first run (table doesn't exist yet)\n\
+                 hint: Use ${{this}} only in @incremental section"
+            );
+        }
+    }
+
+    Ok((base_sql, incremental_sql))
+}
+
+fn save_section(
+    section: &str,
+    lines: &[&str],
+    base_sql: &mut Option<String>,
+    incremental_sql: &mut Option<String>,
+) -> Result<()> {
+    let sql = lines.join("\n").trim().to_string();
+    match section {
+        "base" => *base_sql = Some(sql),
+        "incremental" => *incremental_sql = Some(sql),
+        _ => bail!("unknown section: {}", section),
+    }
+    Ok(())
 }
 
 /// Parse header lines into ModelHeader
@@ -53,9 +173,17 @@ pub fn parse_header_block(lines: &[&str]) -> Result<ModelHeader> {
         kv.insert(k.trim().to_string(), v.trim().to_string());
     }
 
-    let materialized = kv
-        .get("materialized")
-        .ok_or_else(|| anyhow!("missing required header key: materialized"))?;
+    let materialized = kv.get("materialized").ok_or_else(|| {
+        // Check for common typos
+        if kv.contains_key("materialize") {
+            anyhow!("missing required header key: materialized (did you mean 'materialized' instead of 'materialize'?)")
+        } else if kv.contains_key("mat") || kv.contains_key("material") {
+            anyhow!("missing required header key: materialized (use 'materialized', not '{}')",
+                kv.keys().find(|k| *k == "mat" || *k == "material").unwrap())
+        } else {
+            anyhow!("missing required header key: materialized. Valid keys: materialized, deps, unique_key, tests, tags, watermark, lookback")
+        }
+    })?;
     let materialized = Materialized::parse(materialized)?;
     let deps = kv
         .get("deps")
@@ -81,8 +209,39 @@ pub fn parse_header_block(lines: &[&str]) -> Result<ModelHeader> {
         .transpose()?
         .unwrap_or_default();
 
+    // Parse watermark (column or comma-separated columns for compound watermark)
+    let watermark = kv
+        .get("watermark")
+        .map(|s| parse_ident_list(s))
+        .transpose()?
+        .filter(|v| !v.is_empty());
+
+    // Parse lookback interval (e.g., "2 days", "1 hour")
+    let lookback = kv.get("lookback").map(|s| s.to_string());
+
+    // Parse custom incremental filter predicate
+    let incremental_filter = kv.get("incremental_filter").map(|s| s.to_string());
+
     if matches!(materialized, Materialized::Incremental) && unique_key.is_empty() {
         bail!("materialized: incremental requires unique_key");
+    }
+
+    // Validate watermark/lookback/incremental_filter only on incremental models
+    if watermark.is_some() && !matches!(materialized, Materialized::Incremental) {
+        bail!("watermark is only valid for incremental models");
+    }
+    if lookback.is_some() && !matches!(materialized, Materialized::Incremental) {
+        bail!("lookback is only valid for incremental models");
+    }
+    if incremental_filter.is_some() && !matches!(materialized, Materialized::Incremental) {
+        bail!("incremental_filter is only valid for incremental models");
+    }
+    if lookback.is_some() && watermark.is_none() {
+        bail!("lookback requires watermark to be set");
+    }
+    // watermark and incremental_filter are mutually exclusive
+    if watermark.is_some() && incremental_filter.is_some() {
+        bail!("watermark and incremental_filter are mutually exclusive; use one or the other");
     }
 
     Ok(ModelHeader {
@@ -91,6 +250,9 @@ pub fn parse_header_block(lines: &[&str]) -> Result<ModelHeader> {
         unique_key,
         tests,
         tags,
+        watermark,
+        lookback,
+        incremental_filter,
     })
 }
 
@@ -609,5 +771,173 @@ mod tests {
     fn test_parse_string_list_unclosed_quote() {
         let err = parse_tests("accepted_values(status, ['unclosed)").unwrap_err();
         assert!(err.to_string().contains("unclosed") || err.to_string().contains("paren"));
+    }
+
+    // Incremental section tests
+
+    #[test]
+    fn test_parse_incremental_sections_base_only() {
+        let body = "-- @base\nSELECT id, name FROM users";
+        let (base, incr) = parse_incremental_sections(body).unwrap();
+        assert_eq!(base, Some("SELECT id, name FROM users".to_string()));
+        assert_eq!(incr, None);
+    }
+
+    #[test]
+    fn test_parse_incremental_sections_base_and_incremental() {
+        let body = "-- @base\nSELECT * FROM orders\n\n-- @incremental\nSELECT * FROM orders WHERE id > 100";
+        let (base, incr) = parse_incremental_sections(body).unwrap();
+        assert_eq!(base, Some("SELECT * FROM orders".to_string()));
+        assert_eq!(
+            incr,
+            Some("SELECT * FROM orders WHERE id > 100".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_incremental_sections_with_this_variable() {
+        let body = "-- @base\nSELECT * FROM orders\n\n-- @incremental\nSELECT * FROM orders WHERE id > (SELECT MAX(id) FROM ${this})";
+        let (base, incr) = parse_incremental_sections(body).unwrap();
+        assert_eq!(base, Some("SELECT * FROM orders".to_string()));
+        assert!(incr.as_ref().unwrap().contains("${this}"));
+    }
+
+    #[test]
+    fn test_parse_incremental_sections_no_sections_returns_none() {
+        // Level 1: Simple incremental - no sections, body used directly
+        let body = "SELECT * FROM orders";
+        let (base, incr) = parse_incremental_sections(body).unwrap();
+        assert_eq!(base, None);
+        assert_eq!(incr, None);
+    }
+
+    #[test]
+    fn test_parse_incremental_sections_error_incremental_without_base() {
+        let body = "-- @incremental\nSELECT * FROM orders";
+        let err = parse_incremental_sections(body).unwrap_err();
+        assert!(err.to_string().contains("@base"));
+    }
+
+    #[test]
+    fn test_parse_incremental_sections_error_this_in_base() {
+        let body = "-- @base\nSELECT * FROM orders WHERE id > (SELECT MAX(id) FROM ${this})";
+        let err = parse_incremental_sections(body).unwrap_err();
+        assert!(err.to_string().contains("${this}"));
+        assert!(err.to_string().contains("@base"));
+    }
+
+    #[test]
+    fn test_parse_incremental_sections_error_empty_base() {
+        let body = "-- @base\n\n-- @incremental\nSELECT * FROM orders";
+        let err = parse_incremental_sections(body).unwrap_err();
+        assert!(err.to_string().contains("empty"));
+    }
+
+    #[test]
+    fn test_parse_incremental_sections_multiline() {
+        let body = "-- @base\nSELECT\n    id,\n    name\nFROM users\nWHERE active = true\n\n-- @incremental\nSELECT\n    id,\n    name\nFROM users\nWHERE created_at > (SELECT MAX(created_at) FROM ${this})";
+        let (base, incr) = parse_incremental_sections(body).unwrap();
+        assert!(base.as_ref().unwrap().contains("id,"));
+        assert!(base.as_ref().unwrap().contains("WHERE active = true"));
+        assert!(incr.as_ref().unwrap().contains("${this}"));
+    }
+
+    // Watermark parsing tests
+
+    #[test]
+    fn test_parse_header_watermark_simple() {
+        let lines = vec![
+            "-- materialized: incremental",
+            "-- unique_key: id",
+            "-- watermark: updated_at",
+        ];
+        let header = parse_header_block(&lines).unwrap();
+        assert_eq!(header.watermark, Some(vec!["updated_at".to_string()]));
+        assert_eq!(header.lookback, None);
+    }
+
+    #[test]
+    fn test_parse_header_watermark_compound() {
+        let lines = vec![
+            "-- materialized: incremental",
+            "-- unique_key: id",
+            "-- watermark: updated_at, id",
+        ];
+        let header = parse_header_block(&lines).unwrap();
+        assert_eq!(
+            header.watermark,
+            Some(vec!["updated_at".to_string(), "id".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_parse_header_watermark_with_lookback() {
+        let lines = vec![
+            "-- materialized: incremental",
+            "-- unique_key: id",
+            "-- watermark: updated_at",
+            "-- lookback: 2 days",
+        ];
+        let header = parse_header_block(&lines).unwrap();
+        assert_eq!(header.watermark, Some(vec!["updated_at".to_string()]));
+        assert_eq!(header.lookback, Some("2 days".to_string()));
+    }
+
+    #[test]
+    fn test_parse_header_watermark_on_non_incremental_fails() {
+        let lines = vec!["-- materialized: table", "-- watermark: updated_at"];
+        let err = parse_header_block(&lines).unwrap_err();
+        assert!(err.to_string().contains("watermark"));
+        assert!(err.to_string().contains("incremental"));
+    }
+
+    #[test]
+    fn test_parse_header_lookback_without_watermark_fails() {
+        let lines = vec![
+            "-- materialized: incremental",
+            "-- unique_key: id",
+            "-- lookback: 2 days",
+        ];
+        let err = parse_header_block(&lines).unwrap_err();
+        assert!(err.to_string().contains("lookback"));
+        assert!(err.to_string().contains("watermark"));
+    }
+
+    #[test]
+    fn test_parse_header_incremental_filter() {
+        let lines = vec![
+            "-- materialized: incremental",
+            "-- unique_key: id",
+            "-- incremental_filter: created_at > current_date - interval '7 days'",
+        ];
+        let header = parse_header_block(&lines).unwrap();
+        assert_eq!(
+            header.incremental_filter,
+            Some("created_at > current_date - interval '7 days'".to_string())
+        );
+        assert_eq!(header.watermark, None);
+    }
+
+    #[test]
+    fn test_parse_header_incremental_filter_on_non_incremental_fails() {
+        let lines = vec![
+            "-- materialized: table",
+            "-- incremental_filter: created_at > current_date",
+        ];
+        let err = parse_header_block(&lines).unwrap_err();
+        assert!(err.to_string().contains("incremental_filter"));
+        assert!(err.to_string().contains("incremental"));
+    }
+
+    #[test]
+    fn test_parse_header_watermark_and_incremental_filter_mutually_exclusive() {
+        let lines = vec![
+            "-- materialized: incremental",
+            "-- unique_key: id",
+            "-- watermark: updated_at",
+            "-- incremental_filter: created_at > current_date",
+        ];
+        let err = parse_header_block(&lines).unwrap_err();
+        assert!(err.to_string().contains("mutually exclusive"));
     }
 }

@@ -10,7 +10,10 @@ use crate::config::Config;
 pub fn load_project(root: &Path, config: &Config) -> Result<Project> {
     let models_dir = root.join(config.models_dir());
     if !models_dir.is_dir() {
-        bail!("models directory not found: {}", models_dir.display());
+        bail!(
+            "models directory not found: {} (run `pgcrate model init` or `pgcrate init --models`)",
+            models_dir.display()
+        );
     }
 
     let sources: HashSet<Relation> = config
@@ -30,12 +33,14 @@ pub fn load_project(root: &Path, config: &Config) -> Result<Project> {
         }
 
         let rel = model_id_from_path(&models_dir, entry.path())?;
-        let (header, body_sql) = parse_model_file(entry.path())?;
+        let parsed = parse_model_file(entry.path())?;
         let model = Model {
             id: rel.clone(),
             path: entry.path().to_path_buf(),
-            header,
-            body_sql,
+            header: parsed.header,
+            body_sql: parsed.body_sql,
+            base_sql: parsed.base_sql,
+            incremental_sql: parsed.incremental_sql,
         };
         if models.insert(rel.clone(), model).is_some() {
             bail!("duplicate model: {}", rel);
@@ -90,6 +95,14 @@ fn model_id_from_path(models_dir: &Path, path: &Path) -> Result<Relation> {
 
 /// Topological sort of all models. Returns execution order (deps before dependents).
 pub fn topo_sort(project: &Project) -> Result<Vec<Relation>> {
+    // Flatten the layers into a single list
+    let layers = topo_sort_layers(project)?;
+    Ok(layers.into_iter().flatten().collect())
+}
+
+/// Topological sort returning models grouped by execution layer.
+/// Layer 0 has no dependencies, Layer 1 depends only on Layer 0, etc.
+pub fn topo_sort_layers(project: &Project) -> Result<Vec<Vec<Relation>>> {
     let mut in_degree: HashMap<Relation, usize> = HashMap::new();
     let mut dependents: HashMap<Relation, Vec<Relation>> = HashMap::new();
 
@@ -107,26 +120,38 @@ pub fn topo_sort(project: &Project) -> Result<Vec<Relation>> {
         }
     }
 
-    // Kahn's algorithm
-    let mut queue: VecDeque<Relation> = in_degree
+    // Modified Kahn's algorithm to track layers
+    let mut current_layer: Vec<Relation> = in_degree
         .iter()
         .filter(|(_, &deg)| deg == 0)
         .map(|(rel, _)| rel.clone())
         .collect();
 
-    let mut result: Vec<Relation> = Vec::new();
-    while let Some(rel) = queue.pop_front() {
-        result.push(rel.clone());
-        for dependent in dependents.get(&rel).unwrap_or(&Vec::new()) {
-            let deg = in_degree.get_mut(dependent).unwrap();
-            *deg -= 1;
-            if *deg == 0 {
-                queue.push_back(dependent.clone());
+    let mut layers: Vec<Vec<Relation>> = Vec::new();
+    let mut total_processed = 0;
+
+    while !current_layer.is_empty() {
+        // Sort current layer for deterministic output
+        current_layer.sort();
+        total_processed += current_layer.len();
+
+        let mut next_layer: Vec<Relation> = Vec::new();
+
+        for rel in &current_layer {
+            for dependent in dependents.get(rel).unwrap_or(&Vec::new()) {
+                let deg = in_degree.get_mut(dependent).unwrap();
+                *deg -= 1;
+                if *deg == 0 {
+                    next_layer.push(dependent.clone());
+                }
             }
         }
+
+        layers.push(std::mem::take(&mut current_layer));
+        current_layer = next_layer;
     }
 
-    if result.len() != project.models.len() {
+    if total_processed != project.models.len() {
         let in_cycle: Vec<String> = in_degree
             .iter()
             .filter(|(_, &deg)| deg > 0)
@@ -135,7 +160,7 @@ pub fn topo_sort(project: &Project) -> Result<Vec<Relation>> {
         bail!("circular dependency: {}", in_cycle.join(", "));
     }
 
-    Ok(result)
+    Ok(layers)
 }
 
 /// Get execution order for a model and all its upstream dependencies.
@@ -249,6 +274,9 @@ mod tests {
                 unique_key: Vec::new(),
                 tests: Vec::new(),
                 tags: Vec::new(),
+                watermark: None,
+                lookback: None,
+                incremental_filter: None,
             };
             project.models.insert(
                 rel.clone(),
@@ -257,6 +285,8 @@ mod tests {
                     path: PathBuf::new(),
                     header,
                     body_sql: String::new(),
+                    base_sql: None,
+                    incremental_sql: None,
                 },
             );
         }
@@ -398,5 +428,77 @@ mod tests {
         let target = Relation::parse("a.x").unwrap();
         let err = get_downstream_order(&project, &target).unwrap_err();
         assert!(err.to_string().contains("unknown model"));
+    }
+
+    #[test]
+    fn test_topo_sort_layers_empty() {
+        let project = make_project(vec![]);
+        let layers = topo_sort_layers(&project).unwrap();
+        assert!(layers.is_empty());
+    }
+
+    #[test]
+    fn test_topo_sort_layers_single() {
+        let project = make_project(vec![("a.x", vec![])]);
+        let layers = topo_sort_layers(&project).unwrap();
+        assert_eq!(layers.len(), 1);
+        assert_eq!(layers[0].len(), 1);
+        assert_eq!(layers[0][0].name, "x");
+    }
+
+    #[test]
+    fn test_topo_sort_layers_linear() {
+        let project = make_project(vec![
+            ("a.a", vec![]),
+            ("a.b", vec!["a.a"]),
+            ("a.c", vec!["a.b"]),
+        ]);
+        let layers = topo_sort_layers(&project).unwrap();
+        assert_eq!(layers.len(), 3);
+        assert_eq!(layers[0].len(), 1);
+        assert_eq!(layers[0][0].name, "a");
+        assert_eq!(layers[1].len(), 1);
+        assert_eq!(layers[1][0].name, "b");
+        assert_eq!(layers[2].len(), 1);
+        assert_eq!(layers[2][0].name, "c");
+    }
+
+    #[test]
+    fn test_topo_sort_layers_diamond() {
+        let project = make_project(vec![
+            ("s.a", vec![]),
+            ("s.b", vec!["s.a"]),
+            ("s.c", vec!["s.a"]),
+            ("s.d", vec!["s.b", "s.c"]),
+        ]);
+        let layers = topo_sort_layers(&project).unwrap();
+        assert_eq!(layers.len(), 3);
+        // Layer 0: a (no deps)
+        assert_eq!(layers[0].len(), 1);
+        assert_eq!(layers[0][0].name, "a");
+        // Layer 1: b and c (both depend on a)
+        assert_eq!(layers[1].len(), 2);
+        let layer1_names: Vec<_> = layers[1].iter().map(|r| r.name.as_str()).collect();
+        assert!(layer1_names.contains(&"b"));
+        assert!(layer1_names.contains(&"c"));
+        // Layer 2: d (depends on b and c)
+        assert_eq!(layers[2].len(), 1);
+        assert_eq!(layers[2][0].name, "d");
+    }
+
+    #[test]
+    fn test_topo_sort_layers_parallel_roots() {
+        let project = make_project(vec![
+            ("s.a", vec![]),
+            ("s.b", vec![]),
+            ("s.c", vec!["s.a", "s.b"]),
+        ]);
+        let layers = topo_sort_layers(&project).unwrap();
+        assert_eq!(layers.len(), 2);
+        // Layer 0: a and b (both have no deps)
+        assert_eq!(layers[0].len(), 2);
+        // Layer 1: c (depends on a and b)
+        assert_eq!(layers[1].len(), 1);
+        assert_eq!(layers[1][0].name, "c");
     }
 }

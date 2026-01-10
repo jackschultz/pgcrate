@@ -6,13 +6,14 @@ use crate::config::Config;
 use crate::describe;
 use crate::diff::{self, format_diff};
 use crate::introspect::{self, GeneratedFile, IntrospectOptions, SplitMode};
-use crate::output::{DiffResponse, DiffSummaryJson, Output};
+use crate::output::{DescribeResponse, DiffResponse, DiffSummaryJson, Output};
 use crate::sql::quote_ident;
 use anyhow::{bail, Result};
 use chrono::Utc;
 use colored::Colorize;
 use dialoguer::{Confirm, Input};
 use std::fs;
+use std::io::IsTerminal;
 use std::path::Path;
 
 use super::connect;
@@ -36,7 +37,6 @@ struct InitConfig {
     models_dir: String,
     use_seeds: bool,
     seeds_dir: String,
-    seeds_schema: String,
 }
 
 impl InitConfig {
@@ -56,10 +56,6 @@ impl InitConfig {
 
         config.push_str("\n[defaults]\n");
         config.push_str("with_down = true\n");
-
-        if self.use_seeds {
-            config.push_str(&format!("\n[seeds]\nschema = \"{}\"\n", self.seeds_schema));
-        }
 
         config
     }
@@ -87,9 +83,10 @@ pub fn init(
     models_dir: &str,
     seeds: bool,
     seeds_dir: &str,
-    seeds_schema: &str,
 ) -> Result<()> {
     let config_path = Path::new("pgcrate.toml");
+    let stdin_is_terminal = std::io::stdin().is_terminal();
+    let effective_yes = should_use_yes(yes, stdin_is_terminal);
 
     // Check if config already exists
     if config_path.exists() && !force {
@@ -97,7 +94,11 @@ pub fn init(
     }
 
     // Collect configuration - either interactively or from flags
-    let init_config = if yes {
+    if !quiet && !stdin_is_terminal && !yes {
+        println!("Non-interactive mode: using defaults (equivalent to -y).");
+    }
+
+    let init_config = if effective_yes {
         // Non-interactive mode: use flags directly
         InitConfig {
             migrations_dir: normalize_path(migrations_dir),
@@ -105,19 +106,21 @@ pub fn init(
             models_dir: normalize_path(models_dir),
             use_seeds: seeds,
             seeds_dir: normalize_path(seeds_dir),
-            seeds_schema: seeds_schema.to_string(),
         }
     } else {
         // Interactive mode
-        collect_config_interactive(migrations_dir, models_dir, seeds_dir, seeds_schema)?
+        collect_config_interactive(migrations_dir, models_dir, seeds_dir)?
     };
 
     // Show what will be created
-    if !quiet && !yes {
+    if !quiet && !effective_yes {
         println!("\n{}", "Will create:".bold());
         println!("  pgcrate.toml");
         for dir in init_config.directories() {
             println!("  {}/", dir);
+        }
+        if init_config.use_seeds {
+            println!("  {}/public/", init_config.seeds_dir);
         }
         println!();
 
@@ -168,13 +171,64 @@ pub fn init(
         }
     }
 
+    // Seeds are organized by schema directory: seeds/<schema>/<name>.csv
+    if init_config.use_seeds {
+        let public_dir = Path::new(&init_config.seeds_dir).join("public");
+        if !public_dir.exists() {
+            fs::create_dir_all(&public_dir)?;
+            if !quiet {
+                println!("Created: {}/public/", init_config.seeds_dir.green());
+            }
+        }
+        let gitkeep = public_dir.join(".gitkeep");
+        if !gitkeep.exists() {
+            fs::write(&gitkeep, "")?;
+        }
+    }
+
+    // Models are organized by schema directory: models/<schema>/<name>.sql
+    if init_config.use_models {
+        let public_dir = Path::new(&init_config.models_dir).join("public");
+        if !public_dir.exists() {
+            fs::create_dir_all(&public_dir)?;
+            if !quiet {
+                println!("Created: {}/public/", init_config.models_dir.green());
+            }
+        }
+        let gitkeep = public_dir.join(".gitkeep");
+        if !gitkeep.exists() {
+            fs::write(&gitkeep, "")?;
+        }
+    }
+
     // Show next steps
     if !quiet {
         println!("\n{}", "Project initialized.".green().bold());
         println!("\nNext steps:");
         println!("  1. export DATABASE_URL=\"postgres://localhost/mydb\"");
         println!("  2. pgcrate db create");
-        println!("  3. pgcrate new create_users");
+        println!("  3. pgcrate migrate new create_users");
+
+        if init_config.use_seeds {
+            println!("\nSeeds:");
+            println!("  - List seeds:     pgcrate seed list");
+            println!("  - Run seeds:      pgcrate seed run");
+            println!(
+                "  - Layout:         {}/<schema>/<table>.csv",
+                init_config.seeds_dir
+            );
+        }
+
+        if init_config.use_models {
+            println!("\nModels:");
+            println!("  - Create a model: pgcrate model new <schema>.<name>");
+            println!("  - Run models:     pgcrate model run");
+            println!("  - Run tests:      pgcrate model test");
+            println!(
+                "  - Format:         {}/<schema>/<name>.sql",
+                init_config.models_dir
+            );
+        }
     }
 
     Ok(())
@@ -184,7 +238,6 @@ fn collect_config_interactive(
     default_migrations: &str,
     default_models: &str,
     default_seeds: &str,
-    default_seeds_schema: &str,
 ) -> Result<InitConfig> {
     // Migrations directory
     let migrations_dir: String = Input::new()
@@ -198,18 +251,14 @@ fn collect_config_interactive(
         .default(false)
         .interact()?;
 
-    let (seeds_dir, seeds_schema) = if use_seeds {
+    let seeds_dir = if use_seeds {
         let dir: String = Input::new()
             .with_prompt("Seeds directory")
             .default(default_seeds.to_string())
             .interact_text()?;
-        let schema: String = Input::new()
-            .with_prompt("Seeds schema (created in database)")
-            .default(default_seeds_schema.to_string())
-            .interact_text()?;
-        (dir, schema)
+        dir
     } else {
-        (default_seeds.to_string(), default_seeds_schema.to_string())
+        default_seeds.to_string()
     };
 
     // Models
@@ -233,8 +282,11 @@ fn collect_config_interactive(
         models_dir: normalize_path(&models_dir),
         use_seeds,
         seeds_dir: normalize_path(&seeds_dir),
-        seeds_schema,
     })
+}
+
+fn should_use_yes(yes: bool, stdin_is_terminal: bool) -> bool {
+    yes || !stdin_is_terminal
 }
 
 // =============================================================================
@@ -610,29 +662,39 @@ pub async fn describe(
     )
     .await?;
 
-    // Run dependents/dependencies queries if requested (for error detection even in quiet mode)
-    let deps_output = if dependents {
-        let deps = describe::get_dependents(&client, &resolved.schema, &resolved.name).await?;
-        Some((
-            "Direct Dependents:",
-            deps.format(&resolved.schema, &resolved.name),
-        ))
-    } else if dependencies {
-        let deps = describe::get_dependencies(&client, &resolved.schema, &resolved.name).await?;
-        Some((
-            "Direct Dependencies:",
-            deps.format(&resolved.schema, &resolved.name),
-        ))
+    // Run dependents/dependencies queries if requested
+    let deps_data = if dependents {
+        Some(describe::get_dependents(&client, &resolved.schema, &resolved.name).await?)
     } else {
         None
     };
+
+    let dependencies_data = if dependencies {
+        Some(describe::get_dependencies(&client, &resolved.schema, &resolved.name).await?)
+    } else {
+        None
+    };
+
+    // JSON mode: structured output
+    if output.is_json() {
+        let response = DescribeResponse {
+            ok: true,
+            schema: resolved.schema.clone(),
+            name: resolved.name.clone(),
+            table: table_info,
+            dependents: deps_data,
+            dependencies: dependencies_data,
+        };
+        output.json(&response)?;
+        return Ok(());
+    }
 
     // In quiet mode, skip all output (but we've already run queries above for error detection)
     if output.is_quiet() {
         return Ok(());
     }
 
-    // Build and output the result
+    // Human mode: formatted output
     let mut result = String::new();
     result.push('\n');
     result.push_str(&format!(
@@ -646,13 +708,21 @@ pub async fn describe(
     result.push_str(&table_info.format(verbose));
 
     // Append dependents/dependencies section if requested
-    if let Some((header, formatted)) = deps_output {
+    if let Some(ref deps) = deps_data {
         result.push('\n');
         result.push('\n');
-        result.push_str(header);
+        result.push_str("Direct Dependents:");
         result.push('\n');
         result.push('\n');
-        result.push_str(&formatted);
+        result.push_str(&deps.format(&resolved.schema, &resolved.name));
+    }
+    if let Some(ref deps) = dependencies_data {
+        result.push('\n');
+        result.push('\n');
+        result.push_str("Direct Dependencies:");
+        result.push('\n');
+        result.push('\n');
+        result.push_str(&deps.format(&resolved.schema, &resolved.name));
     }
 
     output.data(&result);
@@ -665,6 +735,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_should_use_yes() {
+        assert!(should_use_yes(true, true));
+        assert!(should_use_yes(true, false));
+        assert!(should_use_yes(false, false));
+        assert!(!should_use_yes(false, true));
+    }
+
+    #[test]
     fn test_generated_config_is_valid_toml() {
         // Verify the generated config can be parsed as valid TOML
         let config = InitConfig {
@@ -673,7 +751,6 @@ mod tests {
             models_dir: "models".to_string(),
             use_seeds: false,
             seeds_dir: "seeds".to_string(),
-            seeds_schema: "seeds".to_string(),
         };
         let toml_str = config.generate_toml();
         let result: Result<toml::Value, _> = toml::from_str(&toml_str);
@@ -692,7 +769,6 @@ mod tests {
             models_dir: "models".to_string(),
             use_seeds: true,
             seeds_dir: "seeds".to_string(),
-            seeds_schema: "seeds".to_string(),
         };
         let toml_str = config.generate_toml();
         let parsed: toml::Value = toml::from_str(&toml_str).unwrap();
@@ -706,9 +782,7 @@ mod tests {
         assert_eq!(paths.get("models").and_then(|v| v.as_str()), Some("models"));
         assert_eq!(paths.get("seeds").and_then(|v| v.as_str()), Some("seeds"));
 
-        // Check seeds section
-        let seeds = parsed.get("seeds").expect("should have seeds section");
-        assert_eq!(seeds.get("schema").and_then(|v| v.as_str()), Some("seeds"));
+        // No [seeds].schema is emitted; seeds load into existing tables by name.
     }
 
     #[test]
