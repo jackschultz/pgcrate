@@ -155,7 +155,10 @@ pub fn print_human(result: &SequencesResult, quiet: bool, show_all: bool) {
 
     if to_show.is_empty() {
         if !quiet {
-            println!("All sequences healthy (below {}% threshold)", result.warning_threshold);
+            println!(
+                "All sequences healthy (below {}% threshold)",
+                result.warning_threshold
+            );
         }
         return;
     }
@@ -242,10 +245,7 @@ pub fn print_human(result: &SequencesResult, quiet: bool, show_all: bool) {
                     "  -- Upgrade {}.{} from {} to bigint:",
                     seq.schema, seq.name, seq.data_type
                 );
-                println!(
-                    "  ALTER SEQUENCE {}.{} AS bigint;",
-                    seq.schema, seq.name
-                );
+                println!("  ALTER SEQUENCE {}.{} AS bigint;", seq.schema, seq.name);
             }
             println!();
         }

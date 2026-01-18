@@ -9,7 +9,7 @@ use serde::Serialize;
 use tokio_postgres::Client;
 
 /// XID status thresholds (in transactions)
-const XID_WARNING: i64 = 1_500_000_000;  // 1.5 billion
+const XID_WARNING: i64 = 1_500_000_000; // 1.5 billion
 const XID_CRITICAL: i64 = 1_800_000_000; // 1.8 billion
 
 /// Database-level XID information
@@ -249,10 +249,7 @@ pub fn print_human(result: &XidResult, _quiet: bool) {
         println!();
 
         for vac in &result.vacuum_progress {
-            println!(
-                "  {:40} {:20} {:>5.1}%",
-                vac.table, vac.phase, vac.pct_done
-            );
+            println!("  {:40} {:20} {:>5.1}%", vac.table, vac.phase, vac.pct_done);
         }
     }
 

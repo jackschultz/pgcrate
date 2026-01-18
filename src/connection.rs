@@ -91,7 +91,11 @@ impl ResolvedConnection {
             ConnectionRole::Primary => "primary",
             ConnectionRole::Replica => "replica",
         };
-        let mode_str = if self.readonly { "read-only" } else { "read-write" };
+        let mode_str = if self.readonly {
+            "read-only"
+        } else {
+            "read-write"
+        };
         eprintln!(
             "pgcrate: {} ({}, {}) as {}",
             self.display(),
@@ -128,7 +132,9 @@ pub fn resolve_connection(
     let url = resolve_url(name, config)?;
     let parsed = parse_connection_url(&url)?;
 
-    let readonly = config.readonly.unwrap_or(config.role == ConnectionRole::Replica);
+    let readonly = config
+        .readonly
+        .unwrap_or(config.role == ConnectionRole::Replica);
 
     Ok(ResolvedConnection {
         name: name.to_string(),
@@ -203,7 +209,12 @@ fn expand_env_vars(conn_name: &str, template: &str) -> Result<String> {
             )
         })?;
 
-        result = format!("{}{}{}", &result[..var_start], var_value, &result[var_end + 1..]);
+        result = format!(
+            "{}{}{}",
+            &result[..var_start],
+            var_value,
+            &result[var_end + 1..]
+        );
         start = var_start + var_value.len();
     }
 
@@ -240,7 +251,11 @@ fn execute_command(argv: &[String]) -> Result<String> {
                     let stderr = child.stderr.take();
                     let stderr_msg = if let Some(stderr) = stderr {
                         let reader = BufReader::new(stderr);
-                        reader.lines().filter_map(|l| l.ok()).collect::<Vec<_>>().join("\n")
+                        reader
+                            .lines()
+                            .map_while(Result::ok)
+                            .collect::<Vec<_>>()
+                            .join("\n")
                     } else {
                         String::new()
                     };
@@ -272,7 +287,10 @@ fn execute_command(argv: &[String]) -> Result<String> {
     }
 
     // Read stdout
-    let stdout = child.stdout.take().ok_or_else(|| anyhow::anyhow!("No stdout from command"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("No stdout from command"))?;
     let reader = BufReader::new(stdout);
     let url = reader
         .lines()
@@ -282,7 +300,10 @@ fn execute_command(argv: &[String]) -> Result<String> {
         .to_string();
 
     if url.is_empty() {
-        bail!("Connection command produced empty output: {}", argv.join(" "));
+        bail!(
+            "Connection command produced empty output: {}",
+            argv.join(" ")
+        );
     }
 
     Ok(url)
@@ -328,6 +349,7 @@ pub fn requires_primary_flag(conn: &ResolvedConnection) -> bool {
 
 /// Result of full connection resolution
 #[derive(Debug)]
+#[allow(dead_code)] // Fields used for debugging and future features
 pub struct ConnectionResult {
     /// The database URL to connect with (may include read-only options)
     pub url: String,
@@ -513,7 +535,8 @@ mod tests {
 
     #[test]
     fn test_parse_connection_url_with_credentials() {
-        let parsed = parse_connection_url("postgres://user:pass@host.example.com:5433/appdb").unwrap();
+        let parsed =
+            parse_connection_url("postgres://user:pass@host.example.com:5433/appdb").unwrap();
         assert_eq!(parsed.host, "host.example.com");
         assert_eq!(parsed.port, 5433);
         assert_eq!(parsed.database, "appdb");

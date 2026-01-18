@@ -463,7 +463,10 @@ pub fn print_long_transactions(procs: &[LockProcess], quiet: bool) {
         println!("    App:   {}", proc.application_name);
         println!("    Query: {}", truncate_query(&proc.query, 60));
         if proc.blocked_count > 0 {
-            println!("    ⚠ Being blocked by {} other queries", proc.blocked_count);
+            println!(
+                "    ⚠ Being blocked by {} other queries",
+                proc.blocked_count
+            );
         }
         println!();
     }

@@ -1133,7 +1133,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
             }
 
             // Determine what to show (default: show blocking if nothing specified)
-            let show_blocking = blocking || (!long_tx.is_some() && !idle_in_tx);
+            let show_blocking = blocking || (long_tx.is_none() && !idle_in_tx);
             let show_long_tx = long_tx.is_some();
             let show_idle = idle_in_tx;
 
@@ -1268,13 +1268,15 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
         } => {
             let config =
                 Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            // --allow-write implies --read-write (otherwise writes fail due to read-only URL)
+            let effective_read_write = cli.read_write || allow_write;
             let conn_result = connection::resolve_and_validate(
                 &config,
                 cli.database_url.as_deref(),
                 cli.connection.as_deref(),
                 cli.env_var.as_deref(),
                 cli.allow_primary,
-                cli.read_write,
+                effective_read_write,
                 cli.quiet,
             )?;
             commands::sql(

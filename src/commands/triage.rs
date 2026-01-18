@@ -145,10 +145,7 @@ async fn check_blocking_locks(client: &Client) -> CheckResult {
                     name,
                     label,
                     status,
-                    summary: format!(
-                        "{} blocked (oldest: {} min)",
-                        blocked_count, oldest_min
-                    ),
+                    summary: format!("{} blocked (oldest: {} min)", blocked_count, oldest_min),
                     details: None,
                     action: Some("pgcrate locks --blocking".to_string()),
                 }
@@ -709,16 +706,14 @@ mod tests {
 
     #[test]
     fn test_all_healthy() {
-        let results = TriageResults::new(vec![
-            CheckResult {
-                name: "test1",
-                label: "TEST1",
-                status: CheckStatus::Healthy,
-                summary: "ok".to_string(),
-                details: None,
-                action: None,
-            },
-        ]);
+        let results = TriageResults::new(vec![CheckResult {
+            name: "test1",
+            label: "TEST1",
+            status: CheckStatus::Healthy,
+            summary: "ok".to_string(),
+            details: None,
+            action: None,
+        }]);
         assert_eq!(results.overall_status, CheckStatus::Healthy);
         assert_eq!(results.exit_code(), 0);
     }

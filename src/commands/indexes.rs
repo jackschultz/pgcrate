@@ -371,10 +371,7 @@ pub fn print_human(result: &IndexesResult, verbose: bool) {
         has_output = true;
         println!("UNUSED INDEXES:");
         println!();
-        println!(
-            "  {:40} {:>12} {:>8}",
-            "INDEX", "SIZE", "KEEP?"
-        );
+        println!("  {:40} {:>12} {:>8}", "INDEX", "SIZE", "KEEP?");
         println!("  {}", "-".repeat(64));
 
         for u in &result.unused {
@@ -428,10 +425,7 @@ pub fn print_human(result: &IndexesResult, verbose: bool) {
         println!();
 
         for dup in &result.duplicates {
-            println!(
-                "  {}.{} ({})",
-                dup.schema, dup.table, dup.columns
-            );
+            println!("  {}.{} ({})", dup.schema, dup.table, dup.columns);
 
             for idx in &dup.indexes {
                 let marker = if idx.is_primary {
@@ -473,10 +467,7 @@ pub fn print_human(result: &IndexesResult, verbose: bool) {
             );
         }
         if !result.missing.is_empty() {
-            println!(
-                "  Missing candidates: {}",
-                result.missing.len()
-            );
+            println!("  Missing candidates: {}", result.missing.len());
         }
     } else {
         println!("No index issues found.");
@@ -505,19 +496,16 @@ pub fn print_human(result: &IndexesResult, verbose: bool) {
         // Show drop commands for duplicates (keep the one with most scans or PK/unique)
         for dup in result.duplicates.iter().take(3) {
             // Find the "keeper" - prefer PK, then unique, then most scans
-            let keeper = dup
-                .indexes
-                .iter()
-                .max_by_key(|i| {
-                    let priority = if i.is_primary {
-                        2
-                    } else if i.is_unique {
-                        1
-                    } else {
-                        0
-                    };
-                    (priority, i.idx_scan)
-                });
+            let keeper = dup.indexes.iter().max_by_key(|i| {
+                let priority = if i.is_primary {
+                    2
+                } else if i.is_unique {
+                    1
+                } else {
+                    0
+                };
+                (priority, i.idx_scan)
+            });
 
             if let Some(keep) = keeper {
                 for idx in &dup.indexes {
