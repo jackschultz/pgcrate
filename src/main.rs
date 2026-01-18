@@ -39,6 +39,7 @@ fn json_supported(command: &Commands) -> bool {
         Commands::Locks { .. } => true,
         Commands::Xid { .. } => true,
         Commands::Sequences { .. } => true,
+        Commands::Indexes { .. } => true,
         Commands::Sql { .. } => true,
         Commands::Snapshot { command } => matches!(
             command,
@@ -269,6 +270,15 @@ enum Commands {
         /// Show all sequences, not just problematic ones
         #[arg(long)]
         all: bool,
+    },
+    /// Analyze missing, unused, and duplicate indexes
+    Indexes {
+        /// Number of missing index candidates to show (default: 10)
+        #[arg(long, default_value = "10")]
+        missing_limit: usize,
+        /// Number of unused indexes to show (default: 20)
+        #[arg(long, default_value = "20")]
+        unused_limit: usize,
     },
     /// Run arbitrary SQL against the database (alias: query)
     #[command(alias = "query")]
@@ -1227,6 +1237,31 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 commands::sequences::SeqStatus::Healthy => {}
             }
         }
+        Commands::Indexes {
+            missing_limit,
+            unused_limit,
+        } => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
+            let client = commands::connect(&conn_result.url).await?;
+            let result =
+                commands::indexes::run_indexes(&client, missing_limit, unused_limit).await?;
+
+            if cli.json {
+                commands::indexes::print_json(&result)?;
+            } else {
+                commands::indexes::print_human(&result, cli.verbose);
+            }
+        }
         Commands::Sql {
             command,
             allow_write,
@@ -1595,6 +1630,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 | Commands::Locks { .. }
                 | Commands::Xid { .. }
                 | Commands::Sequences { .. }
+                | Commands::Indexes { .. }
                 | Commands::Sql { .. }
                 | Commands::Db { .. }
                 | Commands::Snapshot { .. }
