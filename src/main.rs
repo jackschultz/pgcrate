@@ -36,6 +36,7 @@ fn json_supported(command: &Commands) -> bool {
         Commands::Diff { .. } => true,
         Commands::Doctor { .. } => true,
         Commands::Triage => true,
+        Commands::Locks { .. } => true,
         Commands::Sql { .. } => true,
         Commands::Snapshot { command } => matches!(
             command,
@@ -228,6 +229,27 @@ enum Commands {
     },
     /// Quick database health triage (locks, transactions, XID, sequences, connections)
     Triage,
+    /// Inspect blocking locks and long transactions
+    Locks {
+        /// Show only blocking chains
+        #[arg(long)]
+        blocking: bool,
+        /// Show transactions running longer than N minutes (default: 5)
+        #[arg(long, value_name = "MINUTES")]
+        long_tx: Option<u64>,
+        /// Show idle-in-transaction sessions
+        #[arg(long)]
+        idle_in_tx: bool,
+        /// Cancel query for PID (pg_cancel_backend)
+        #[arg(long, value_name = "PID")]
+        cancel: Option<i32>,
+        /// Terminate connection for PID (pg_terminate_backend)
+        #[arg(long, value_name = "PID")]
+        kill: Option<i32>,
+        /// Actually execute cancel/kill (default is dry-run)
+        #[arg(long)]
+        execute: bool,
+    },
     /// Run arbitrary SQL against the database (alias: query)
     #[command(alias = "query")]
     Sql {
@@ -1046,6 +1068,89 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 std::process::exit(exit_code);
             }
         }
+        Commands::Locks {
+            blocking,
+            long_tx,
+            idle_in_tx,
+            cancel,
+            kill,
+            execute,
+        } => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+
+            // For cancel/kill operations, we need read-write access
+            let needs_write = cancel.is_some() || kill.is_some();
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                needs_write || cli.read_write,
+                cli.quiet,
+            )?;
+            let client = commands::connect(&conn_result.url).await?;
+
+            // Handle cancel/kill operations
+            if let Some(pid) = cancel {
+                commands::locks::cancel_query(&client, pid, execute).await?;
+                return Ok(());
+            }
+            if let Some(pid) = kill {
+                commands::locks::terminate_connection(&client, pid, execute).await?;
+                return Ok(());
+            }
+
+            // Determine what to show (default: show blocking if nothing specified)
+            let show_blocking = blocking || (!long_tx.is_some() && !idle_in_tx);
+            let show_long_tx = long_tx.is_some();
+            let show_idle = idle_in_tx;
+
+            let mut result = commands::locks::LocksResult {
+                blocking_chains: vec![],
+                long_transactions: vec![],
+                idle_in_transaction: vec![],
+            };
+
+            if show_blocking {
+                result.blocking_chains = commands::locks::get_blocking_chains(&client).await?;
+            }
+            if show_long_tx {
+                let min_minutes = long_tx.unwrap_or(5);
+                result.long_transactions =
+                    commands::locks::get_long_transactions(&client, min_minutes).await?;
+            }
+            if show_idle {
+                result.idle_in_transaction =
+                    commands::locks::get_idle_in_transaction(&client).await?;
+            }
+
+            if cli.json {
+                commands::locks::print_json(&result)?;
+            } else {
+                if show_blocking {
+                    commands::locks::print_blocking_chains(&result.blocking_chains, cli.quiet);
+                }
+                if show_long_tx {
+                    if show_blocking && !result.blocking_chains.is_empty() {
+                        println!();
+                    }
+                    commands::locks::print_long_transactions(&result.long_transactions, cli.quiet);
+                }
+                if show_idle {
+                    if (show_blocking && !result.blocking_chains.is_empty())
+                        || (show_long_tx && !result.long_transactions.is_empty())
+                    {
+                        println!();
+                    }
+                    commands::locks::print_idle_in_transaction(
+                        &result.idle_in_transaction,
+                        cli.quiet,
+                    );
+                }
+            }
+        }
         Commands::Sql {
             command,
             allow_write,
@@ -1411,6 +1516,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 | Commands::Init { .. }
                 | Commands::Doctor { .. }
                 | Commands::Triage
+                | Commands::Locks { .. }
                 | Commands::Sql { .. }
                 | Commands::Db { .. }
                 | Commands::Snapshot { .. }

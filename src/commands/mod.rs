@@ -7,6 +7,7 @@ mod bootstrap;
 mod db;
 mod doctor;
 mod extension;
+pub mod locks;
 mod migrations;
 pub mod model;
 mod role;
