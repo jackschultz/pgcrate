@@ -485,17 +485,41 @@ pub fn print_human(result: &IndexesResult, verbose: bool) {
         println!("RECOMMENDED ACTIONS:");
         println!();
 
-        // Show drop commands for unused (non-constraint) indexes
-        for u in droppable_unused.iter().take(3) {
-            println!(
-                "  DROP INDEX {}.{};  -- {} unused",
-                u.schema, u.index, u.index_size
-            );
+        // Collect indexes to drop as duplicates (so we can dedupe against unused)
+        let mut duplicate_drops: std::collections::HashSet<(String, String)> =
+            std::collections::HashSet::new();
+        for dup in &result.duplicates {
+            let keeper = dup.indexes.iter().max_by_key(|i| {
+                let priority = if i.is_primary {
+                    2
+                } else if i.is_unique {
+                    1
+                } else {
+                    0
+                };
+                (priority, i.idx_scan)
+            });
+            if let Some(keep) = keeper {
+                for idx in &dup.indexes {
+                    if idx.name != keep.name && !idx.is_primary {
+                        duplicate_drops.insert((dup.schema.clone(), idx.name.clone()));
+                    }
+                }
+            }
+        }
+
+        // Show drop commands for unused indexes (excluding those already in duplicates)
+        for u in droppable_unused.iter().take(5) {
+            if !duplicate_drops.contains(&(u.schema.clone(), u.index.clone())) {
+                println!(
+                    "  DROP INDEX {}.{};  -- {} unused",
+                    u.schema, u.index, u.index_size
+                );
+            }
         }
 
         // Show drop commands for duplicates (keep the one with most scans or PK/unique)
         for dup in result.duplicates.iter().take(3) {
-            // Find the "keeper" - prefer PK, then unique, then most scans
             let keeper = dup.indexes.iter().max_by_key(|i| {
                 let priority = if i.is_primary {
                     2
