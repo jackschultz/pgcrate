@@ -1,0 +1,11 @@
+code,name,shipping_available
+US,United States,true
+CA,Canada,true
+GB,United Kingdom,true
+DE,Germany,true
+FR,France,true
+AU,Australia,true
+JP,Japan,true
+MX,Mexico,true
+BR,Brazil,false
+CN,China,false

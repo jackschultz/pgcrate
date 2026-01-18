@@ -1,0 +1,5 @@
+name,base_cost,estimated_days_min,estimated_days_max,is_active
+Standard Shipping,5.99,5,10,true
+Express Shipping,12.99,2,4,true
+Overnight,24.99,1,1,true
+Economy,3.99,7,14,true

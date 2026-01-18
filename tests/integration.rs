@@ -29,12 +29,18 @@
 //! - `commands/sql.rs` - arbitrary SQL execution
 //! - `commands/model.rs` - model compile, run, status, graph
 //!
+//! **Connection:**
+//! - `connection/management.rs` - connection options (-C, -d, --database-url, DATABASE_URL)
+//! - `connection/permissions.rs` - permission denied scenarios with read-only users
+//!
 //! **Diagnostics:**
 //! - `diagnostics/basic.rs` - triage, sequences (healthy state)
 //! - `diagnostics/sequences_scenarios.rs` - sequence warning/critical thresholds
 //! - `diagnostics/indexes.rs` - duplicate, missing FK index detection
+//! - `diagnostics/locks.rs` - lock detection, long transactions, blocking chains
 
 #[macro_use]
 mod common;
 mod commands;
+mod connection;
 mod diagnostics;

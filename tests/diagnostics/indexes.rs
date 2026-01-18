@@ -260,15 +260,14 @@ fn test_indexes_excludes_primary_keys_from_duplicates() {
     let json: serde_json::Value = serde_json::from_str(&out)
         .unwrap_or_else(|e| panic!("Invalid JSON: {}\nOutput: {}", e, out));
 
-    // Should detect that pk_test_id_idx duplicates the PK
-    if let Some(duplicates) = json.get("duplicates").and_then(|d| d.as_array()) {
-        // Either it's flagged as duplicate OR the implementation excludes PK comparisons
-        // Both are valid behaviors - just verify the command runs
-        assert!(
-            duplicates.is_empty() || !duplicates.is_empty(),
-            "Command should run successfully"
-        );
-    }
+    // The pk_test_id_idx duplicates the PK index - implementation may or may not flag this.
+    // Primary goal: verify the command handles this edge case without error.
+    // The JSON should be valid and contain a duplicates key.
+    assert!(
+        json.get("duplicates").is_some(),
+        "JSON should contain duplicates key: {}",
+        json
+    );
 }
 
 // ============================================================================

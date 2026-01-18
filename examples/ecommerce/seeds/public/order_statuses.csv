@@ -1,0 +1,8 @@
+name,description,is_terminal
+pending,Order placed but not confirmed,false
+confirmed,Payment confirmed,false
+processing,Order being prepared,false
+shipped,Order shipped to customer,false
+delivered,Order delivered,true
+cancelled,Order cancelled,true
+refunded,Order refunded,true
