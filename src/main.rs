@@ -15,6 +15,7 @@ mod introspect;
 mod migrations;
 mod model;
 mod output;
+mod redact;
 mod seed;
 mod snapshot;
 mod sql;
@@ -156,6 +157,10 @@ struct Cli {
     /// Lock timeout (e.g., "500ms", "1s"). Default: 500ms
     #[arg(long = "lock-timeout", global = true, value_name = "DURATION")]
     lock_timeout: Option<String>,
+
+    /// Disable redaction of sensitive data in output (INSECURE)
+    #[arg(long = "no-redact", global = true)]
+    no_redact: bool,
 
     #[command(subcommand)]
     command: Commands,
@@ -1217,6 +1222,13 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
             if show_idle {
                 result.idle_in_transaction =
                     commands::locks::get_idle_in_transaction(&client).await?;
+            }
+
+            // Apply redaction unless explicitly disabled
+            if cli.no_redact {
+                eprintln!("pgcrate: WARNING: --no-redact disables credential redaction. Output may contain sensitive data.");
+            } else {
+                result.redact();
             }
 
             if cli.json {

@@ -40,6 +40,31 @@ pub struct LocksResult {
     pub idle_in_transaction: Vec<LockProcess>,
 }
 
+impl LocksResult {
+    /// Apply redaction to all query text in the result.
+    pub fn redact(&mut self) {
+        for chain in &mut self.blocking_chains {
+            chain.root.redact_query();
+            for p in &mut chain.blocked {
+                p.redact_query();
+            }
+        }
+        for p in &mut self.long_transactions {
+            p.redact_query();
+        }
+        for p in &mut self.idle_in_transaction {
+            p.redact_query();
+        }
+    }
+}
+
+impl LockProcess {
+    fn redact_query(&mut self) {
+        use crate::redact;
+        self.query = redact::redact_query(&self.query);
+    }
+}
+
 /// Get all blocking chains
 pub async fn get_blocking_chains(client: &Client) -> Result<Vec<BlockingChain>> {
     // First, get all blocked processes and their blockers
