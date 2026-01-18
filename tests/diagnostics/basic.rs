@@ -36,7 +36,15 @@ fn test_triage_json_structure() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate_ok(&["triage", "--json"]);
+    // Use run_pgcrate (not _ok) because triage can return non-zero for warnings
+    let output = project.run_pgcrate(&["triage", "--json"]);
+
+    // Triage should return valid exit code (0=healthy, 1=warning, 2=critical)
+    assert!(
+        output.status.code().unwrap_or(99) <= 2,
+        "triage should return valid exit code, got {:?}",
+        output.status.code()
+    );
 
     let json = parse_json(&output);
     assert!(json.is_object(), "Should return JSON object");
