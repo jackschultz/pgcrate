@@ -71,7 +71,10 @@ fn test_describe_table_not_found() {
     let output = project.run_pgcrate(&["describe", "nonexistent_table"]);
 
     // Should fail with clear error
-    assert!(!output.status.success(), "Should fail for non-existent table");
+    assert!(
+        !output.status.success(),
+        "Should fail for non-existent table"
+    );
 
     let err = stderr(&output);
     assert!(
@@ -93,5 +96,9 @@ fn test_describe_with_schema_prefix() {
     let output = project.run_pgcrate_ok(&["describe", "public.users"]);
 
     let out = stdout(&output);
-    assert!(out.contains("email"), "Should describe public.users: {}", out);
+    assert!(
+        out.contains("email"),
+        "Should describe public.users: {}",
+        out
+    );
 }

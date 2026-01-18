@@ -21,7 +21,9 @@ fn test_model_compile_generates_sql() {
     let out = stdout(&output);
     // Should mention compilation or models
     assert!(
-        out.to_lowercase().contains("compil") || out.to_lowercase().contains("model") || out.is_empty(),
+        out.to_lowercase().contains("compil")
+            || out.to_lowercase().contains("model")
+            || out.is_empty(),
         "Should compile models: {}",
         out
     );
@@ -51,7 +53,8 @@ fn test_model_compile_shows_model_name() {
     assert!(
         combined.contains("user_stats") || combined.contains("model"),
         "Should mention model name: stdout={}, stderr={}",
-        out, err
+        out,
+        err
     );
 }
 
@@ -75,7 +78,7 @@ fn test_model_run_creates_table() {
 
     // Model should be created in 'marts' schema (matching folder structure)
     let tables = db.query(
-        "SELECT tablename FROM pg_tables WHERE schemaname = 'marts' AND tablename = 'user_stats'"
+        "SELECT tablename FROM pg_tables WHERE schemaname = 'marts' AND tablename = 'user_stats'",
     );
 
     assert!(
@@ -157,7 +160,8 @@ fn test_model_status_json_output() {
         assert!(
             out.trim().starts_with('{') || out.trim().starts_with('['),
             "model status --json should produce JSON when successful: stdout={}, stderr={}",
-            out, err
+            out,
+            err
         );
         let _json = parse_json(&output);
     }
@@ -180,8 +184,11 @@ fn test_model_graph_shows_dependencies() {
     let out = stdout(&output);
     // Should show the model and its dependencies
     assert!(
-        out.contains("user_stats") || out.contains("users") || out.contains("posts")
-        || out.contains("->") || out.contains("deps"),
+        out.contains("user_stats")
+            || out.contains("users")
+            || out.contains("posts")
+            || out.contains("->")
+            || out.contains("deps"),
         "Should show dependency graph: {}",
         out
     );
@@ -211,9 +218,12 @@ fn test_model_run_missing_source_table() {
     let combined = format!("{}{}", out, err).to_lowercase();
 
     assert!(
-        combined.contains("not exist") || combined.contains("relation") || combined.contains("error"),
+        combined.contains("not exist")
+            || combined.contains("relation")
+            || combined.contains("error"),
         "Should report missing table: stdout={}, stderr={}",
-        out, err
+        out,
+        err
     );
 }
 
@@ -228,10 +238,7 @@ fn test_model_lint_checks_issues() {
     let output = project.run_pgcrate(&["model", "lint"]);
 
     // Lint should complete (may have warnings or be clean)
-    assert!(
-        output.status.code().is_some(),
-        "Lint should complete"
-    );
+    assert!(output.status.code().is_some(), "Lint should complete");
 }
 
 // ============================================================================

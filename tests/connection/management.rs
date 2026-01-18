@@ -6,8 +6,8 @@
 //! - Environment variable fallback (DATABASE_URL)
 //! - Error handling for invalid/unreachable connections
 
-use std::process::Command;
 use crate::common::{stderr, stdout, TestDatabase, TestProject};
+use std::process::Command;
 
 /// Extract host:port from a database URL for use in error scenario tests.
 /// Returns (host, port) parsed from postgres://user:pass@host:port/db
@@ -92,7 +92,8 @@ fn test_connection_named_not_found() {
             || combined.contains("nonexistent")
             || combined.contains("connection"),
         "Should report connection not found: stdout={}, stderr={}",
-        out, err
+        out,
+        err
     );
 }
 
@@ -235,10 +236,7 @@ fn test_connection_wrong_password() {
     let output = project.run_pgcrate(&["doctor", "-d", &bad_url]);
 
     // Should fail with auth error
-    assert!(
-        !output.status.success(),
-        "Should fail on wrong password"
-    );
+    assert!(!output.status.success(), "Should fail on wrong password");
 
     let err = stderr(&output);
     let out = stdout(&output);
@@ -270,10 +268,7 @@ fn test_connection_host_unreachable() {
 
     let output = project.run_pgcrate(&["doctor", "-d", &bad_url]);
 
-    assert!(
-        !output.status.success(),
-        "Should fail on unreachable host"
-    );
+    assert!(!output.status.success(), "Should fail on unreachable host");
 
     let err = stderr(&output);
     let out = stdout(&output);
@@ -343,10 +338,10 @@ fn test_connection_flag_overrides_config() {
 
     // Verify tables are in db2, not db
     let tables_db2 = db2.query(
-        "SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename = 'users'"
+        "SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename = 'users'",
     );
     let tables_db = db.query(
-        "SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename = 'users'"
+        "SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename = 'users'",
     );
 
     assert!(

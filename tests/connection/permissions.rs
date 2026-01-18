@@ -3,8 +3,8 @@
 //! Tests verify that pgcrate provides clear error messages when
 //! operations fail due to insufficient database permissions.
 
-use std::sync::atomic::{AtomicU32, Ordering};
 use crate::common::{stderr, stdout, TestDatabase, TestProject};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 static USER_COUNTER: AtomicU32 = AtomicU32::new(0);
 
@@ -65,7 +65,13 @@ fn build_url_with_credentials(base_url: &str, user: &str, password: &str) -> Str
         // No credentials in URL, insert them
         if let Some(scheme_end) = base_url.find("://") {
             let rest = &base_url[scheme_end + 3..];
-            format!("{}://{}:{}@{}", &base_url[..scheme_end], user, password, rest)
+            format!(
+                "{}://{}:{}@{}",
+                &base_url[..scheme_end],
+                user,
+                password,
+                rest
+            )
         } else {
             panic!("Invalid database URL format: {}", base_url);
         }
@@ -271,13 +277,8 @@ fn test_readonly_user_can_read() {
         .unwrap_or("unknown");
 
     // Read-only user should be able to SELECT
-    let output = project.run_pgcrate_ok(&[
-        "sql",
-        "-c",
-        "SELECT email FROM users",
-        "-d",
-        &readonly_url,
-    ]);
+    let output =
+        project.run_pgcrate_ok(&["sql", "-c", "SELECT email FROM users", "-d", &readonly_url]);
 
     let out = stdout(&output);
     assert!(
@@ -323,8 +324,7 @@ fn test_readonly_user_can_run_diagnostics() {
     let combined_lower = err.to_lowercase();
 
     assert!(
-        !combined_lower.contains("permission denied")
-            && !combined_lower.contains("privilege"),
+        !combined_lower.contains("permission denied") && !combined_lower.contains("privilege"),
         "Diagnostics should work for read-only user: {}",
         err
     );

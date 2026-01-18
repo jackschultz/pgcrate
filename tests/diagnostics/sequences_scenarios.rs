@@ -27,7 +27,10 @@ fn create_sequence_at_percentage(db: &TestDatabase, name: &str, percentage: u8) 
 
     // Set to target percentage
     if restart_at > 1 {
-        db.run_sql_ok(&format!("ALTER SEQUENCE {} RESTART WITH {}", name, restart_at));
+        db.run_sql_ok(&format!(
+            "ALTER SEQUENCE {} RESTART WITH {}",
+            name, restart_at
+        ));
         // Advance to register the value
         db.run_sql_ok(&format!("SELECT nextval('{}')", name));
     }
@@ -284,15 +287,21 @@ fn test_sequences_output_shows_percentage() {
     assert!(
         out.contains("test_seq_pct"),
         "Output should show sequence name: stdout={}, stderr={}",
-        out, err
+        out,
+        err
     );
 
     // Should show percentage around 75% (74-76 acceptable due to rounding)
     // Format may include decimal: "75.0%" or "75%"
     assert!(
-        out.contains("74.") || out.contains("75.") || out.contains("76.")
-            || out.contains("74%") || out.contains("75%") || out.contains("76%"),
+        out.contains("74.")
+            || out.contains("75.")
+            || out.contains("76.")
+            || out.contains("74%")
+            || out.contains("75%")
+            || out.contains("76%"),
         "Output should show percentage around 75%: stdout={}, stderr={}",
-        out, err
+        out,
+        err
     );
 }

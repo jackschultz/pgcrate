@@ -144,7 +144,10 @@ fn test_seed_validate_checks_schema() {
     let output = project.run_pgcrate_ok(&["seed", "validate"]);
 
     // Should pass validation for valid seeds
-    assert!(output.status.success(), "Validation should pass for valid seeds");
+    assert!(
+        output.status.success(),
+        "Validation should pass for valid seeds"
+    );
 }
 
 #[test]

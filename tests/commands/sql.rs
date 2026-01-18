@@ -58,7 +58,8 @@ fn test_sql_json_output() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate_ok(&["sql", "-c", "SELECT 1 AS num, 'hello' AS str", "--json"]);
+    let output =
+        project.run_pgcrate_ok(&["sql", "-c", "SELECT 1 AS num, 'hello' AS str", "--json"]);
 
     let json = parse_json(&output);
 
@@ -79,9 +80,16 @@ fn test_sql_json_multiple_rows() {
     project.run_pgcrate_ok(&["migrate", "up"]);
 
     // Insert multiple rows
-    db.run_sql_ok("INSERT INTO users (email, name) VALUES ('a@test.com', 'A'), ('b@test.com', 'B')");
+    db.run_sql_ok(
+        "INSERT INTO users (email, name) VALUES ('a@test.com', 'A'), ('b@test.com', 'B')",
+    );
 
-    let output = project.run_pgcrate_ok(&["sql", "-c", "SELECT email FROM users ORDER BY email", "--json"]);
+    let output = project.run_pgcrate_ok(&[
+        "sql",
+        "-c",
+        "SELECT email FROM users ORDER BY email",
+        "--json",
+    ]);
 
     let json = parse_json(&output);
 
@@ -95,11 +103,7 @@ fn test_sql_json_multiple_rows() {
         .and_then(|r| r.as_array());
 
     if let Some(rows) = rows {
-        assert!(
-            rows.len() >= 2,
-            "Should return multiple rows: {:?}",
-            rows
-        );
+        assert!(rows.len() >= 2, "Should return multiple rows: {:?}", rows);
     } else {
         // Alternative: check if output contains both emails
         let out = stdout(&output);
@@ -124,7 +128,11 @@ fn test_sql_blocks_write_by_default() {
     project.run_pgcrate_ok(&["migrate", "up"]);
 
     // Try to INSERT without --allow-write
-    let output = project.run_pgcrate(&["sql", "-c", "INSERT INTO users (email, name) VALUES ('blocked@test.com', 'Blocked')"]);
+    let output = project.run_pgcrate(&[
+        "sql",
+        "-c",
+        "INSERT INTO users (email, name) VALUES ('blocked@test.com', 'Blocked')",
+    ]);
 
     // Should fail or warn
     let out = stdout(&output);
@@ -132,9 +140,12 @@ fn test_sql_blocks_write_by_default() {
     let combined = format!("{}{}", out, err);
 
     assert!(
-        !output.status.success() || combined.to_lowercase().contains("write") || combined.to_lowercase().contains("read"),
+        !output.status.success()
+            || combined.to_lowercase().contains("write")
+            || combined.to_lowercase().contains("read"),
         "Should block or warn about write operation: stdout={}, stderr={}",
-        out, err
+        out,
+        err
     );
 }
 
@@ -151,7 +162,7 @@ fn test_sql_allows_write_with_flag() {
         "sql",
         "-c",
         "INSERT INTO users (email, name) VALUES ('allowed@test.com', 'Allowed')",
-        "--allow-write"
+        "--allow-write",
     ]);
 
     // Verify data was inserted
@@ -197,10 +208,7 @@ fn test_sql_table_not_found_error() {
     // Don't run migrations - tables don't exist
     let output = project.run_pgcrate(&["sql", "-c", "SELECT * FROM nonexistent_table"]);
 
-    assert!(
-        !output.status.success(),
-        "Should fail on missing table"
-    );
+    assert!(!output.status.success(), "Should fail on missing table");
 
     let err = stderr(&output);
     assert!(
@@ -254,6 +262,7 @@ fn test_sql_verbose_shows_query() {
     assert!(
         combined.contains("SELECT") || combined.contains("42") || combined.contains("answer"),
         "Verbose should show query details: stdout={}, stderr={}",
-        out, err
+        out,
+        err
     );
 }

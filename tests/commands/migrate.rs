@@ -123,10 +123,7 @@ fn test_migrate_up_invalid_sql() {
     let output = project.run_pgcrate(&["migrate", "up"]);
 
     // Should fail on syntax error
-    assert!(
-        !output.status.success(),
-        "Should fail on invalid SQL"
-    );
+    assert!(!output.status.success(), "Should fail on invalid SQL");
 
     let err = stderr(&output);
     assert!(
@@ -151,14 +148,20 @@ fn test_migrate_down_rolls_back() {
 
     // Verify posts table exists
     let before = db.query("SELECT tablename FROM pg_tables WHERE tablename = 'posts'");
-    assert!(before.contains("posts"), "posts should exist before rollback");
+    assert!(
+        before.contains("posts"),
+        "posts should exist before rollback"
+    );
 
     // Roll back one migration (--steps and --yes are required)
     project.run_pgcrate_ok(&["migrate", "down", "--steps", "1", "--yes"]);
 
     // posts table should be gone (last migration creates posts)
     let after = db.query("SELECT tablename FROM pg_tables WHERE tablename = 'posts'");
-    assert!(!after.contains("posts"), "posts should not exist after rollback");
+    assert!(
+        !after.contains("posts"),
+        "posts should not exist after rollback"
+    );
 }
 
 #[test]
@@ -218,7 +221,10 @@ fn test_migrate_status_json_output() {
     let output = project.run_pgcrate_ok(&["migrate", "status", "--json"]);
 
     let json = parse_json(&output);
-    assert!(json.is_object() || json.is_array(), "Should return valid JSON");
+    assert!(
+        json.is_object() || json.is_array(),
+        "Should return valid JSON"
+    );
 }
 
 // ============================================================================
@@ -270,8 +276,10 @@ fn test_migrate_baseline_marks_existing() {
 
     // The baseline migration tracking should exist
     assert!(
-        out.contains("20240101000000") || out.contains("baseline") || out.contains("Applied")
-        || out.contains("applied"),
+        out.contains("20240101000000")
+            || out.contains("baseline")
+            || out.contains("Applied")
+            || out.contains("applied"),
         "Should show migrations after baseline: {}",
         out
     );

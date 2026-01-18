@@ -11,14 +11,23 @@ fn test_init_creates_structure() {
     let output = project.run_pgcrate_ok(&["init", "-y"]);
 
     // Verify config was created
-    assert!(project.file_exists("pgcrate.toml"), "pgcrate.toml should exist");
+    assert!(
+        project.file_exists("pgcrate.toml"),
+        "pgcrate.toml should exist"
+    );
 
     // Verify directories were created
-    assert!(project.file_exists("db/migrations"), "migrations dir should exist");
+    assert!(
+        project.file_exists("db/migrations"),
+        "migrations dir should exist"
+    );
 
     // Check output mentions what was created
     let out = stdout(&output);
-    assert!(out.contains("pgcrate.toml") || out.contains("Created"), "Should mention creation");
+    assert!(
+        out.contains("pgcrate.toml") || out.contains("Created"),
+        "Should mention creation"
+    );
 }
 
 #[test]
@@ -37,7 +46,10 @@ fn test_init_respects_existing_config() {
     let new_config = project.read_file("pgcrate.toml");
 
     // Config should still contain database URL from fixture (test harness sets it)
-    assert!(new_config.contains(db.url()), "Config should have test DB URL");
+    assert!(
+        new_config.contains(db.url()),
+        "Config should have test DB URL"
+    );
 }
 
 #[test]
@@ -49,7 +61,10 @@ fn test_init_in_empty_dir() {
     // Should work even with no prior files
     let _output = project.run_pgcrate_ok(&["init", "-y"]);
 
-    assert!(project.file_exists("pgcrate.toml"), "Should create pgcrate.toml");
+    assert!(
+        project.file_exists("pgcrate.toml"),
+        "Should create pgcrate.toml"
+    );
 }
 
 #[test]

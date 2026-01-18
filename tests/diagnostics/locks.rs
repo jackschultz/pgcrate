@@ -7,10 +7,10 @@
 //!
 //! These tests use background psql processes to create real lock scenarios.
 
+use crate::common::{parse_json, stderr, stdout, TestDatabase, TestProject};
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::Duration;
-use crate::common::{parse_json, stderr, stdout, TestDatabase, TestProject};
 
 // ============================================================================
 // Helper: Background psql session
@@ -61,7 +61,8 @@ fn test_locks_healthy_no_blocking() {
     assert!(
         !err.to_lowercase().contains("error") || err.contains("0 error"),
         "Locks should not report errors when idle: stdout={}, stderr={}",
-        out, err
+        out,
+        err
     );
 }
 
@@ -132,7 +133,8 @@ fn test_locks_long_tx_threshold() {
     assert!(
         output.status.success(),
         "Long-tx flag should be accepted: stdout={}, stderr={}",
-        out, err
+        out,
+        err
     );
 }
 
@@ -146,10 +148,7 @@ fn test_locks_detects_long_transaction() {
 
     // Spawn a background transaction that will run for a while
     // We use pg_sleep to keep it active, with a very short threshold
-    let mut child = spawn_psql_session(
-        db.url(),
-        "BEGIN; SELECT pg_sleep(10); COMMIT;",
-    );
+    let mut child = spawn_psql_session(db.url(), "BEGIN; SELECT pg_sleep(10); COMMIT;");
 
     // Give the transaction time to start
     thread::sleep(Duration::from_millis(200));
@@ -177,7 +176,8 @@ fn test_locks_detects_long_transaction() {
     assert!(
         output.status.success() || err.contains("no long"),
         "Long-tx check should complete: stdout={}, stderr={}",
-        out, err
+        out,
+        err
     );
 }
 
@@ -228,7 +228,11 @@ fn test_locks_detects_blocking_chain() {
     {
         let stdin = session1.stdin.as_mut().expect("Failed to get stdin");
         writeln!(stdin, "BEGIN;").expect("Failed to write");
-        writeln!(stdin, "SELECT * FROM users WHERE email = 'lock@test.com' FOR UPDATE;").expect("Failed to write");
+        writeln!(
+            stdin,
+            "SELECT * FROM users WHERE email = 'lock@test.com' FOR UPDATE;"
+        )
+        .expect("Failed to write");
         stdin.flush().expect("Failed to flush");
     }
 
@@ -241,7 +245,11 @@ fn test_locks_detects_blocking_chain() {
         let stdin = session2.stdin.as_mut().expect("Failed to get stdin");
         // This will block waiting for session1's lock
         writeln!(stdin, "BEGIN;").expect("Failed to write");
-        writeln!(stdin, "SELECT * FROM users WHERE email = 'lock@test.com' FOR UPDATE;").expect("Failed to write");
+        writeln!(
+            stdin,
+            "SELECT * FROM users WHERE email = 'lock@test.com' FOR UPDATE;"
+        )
+        .expect("Failed to write");
         stdin.flush().expect("Failed to flush");
     }
 
@@ -265,7 +273,8 @@ fn test_locks_detects_blocking_chain() {
     assert!(
         output.status.success() || output.status.code() == Some(1),
         "Blocking check should complete: stdout={}, stderr={}",
-        out, err
+        out,
+        err
     );
 }
 
@@ -294,13 +303,17 @@ fn test_locks_cancel_dry_run() {
     assert!(
         output.status.code().is_some(),
         "Cancel dry-run should complete: stdout={}, stderr={}",
-        out, err
+        out,
+        err
     );
 
     // Should indicate dry-run behavior or report PID not found
     assert!(
-        combined.contains("dry") || combined.contains("would") || combined.contains("not found")
-            || combined.contains("no process") || combined.contains("pid"),
+        combined.contains("dry")
+            || combined.contains("would")
+            || combined.contains("not found")
+            || combined.contains("no process")
+            || combined.contains("pid"),
         "Should indicate dry-run or report PID status: {}",
         combined
     );
@@ -325,13 +338,17 @@ fn test_locks_kill_dry_run() {
     assert!(
         output.status.code().is_some(),
         "Kill dry-run should complete: stdout={}, stderr={}",
-        out, err
+        out,
+        err
     );
 
     // Should indicate dry-run behavior or report PID not found
     assert!(
-        combined.contains("dry") || combined.contains("would") || combined.contains("not found")
-            || combined.contains("no process") || combined.contains("pid"),
+        combined.contains("dry")
+            || combined.contains("would")
+            || combined.contains("not found")
+            || combined.contains("no process")
+            || combined.contains("pid"),
         "Should indicate dry-run or report PID status: {}",
         combined
     );

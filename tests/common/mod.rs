@@ -302,9 +302,8 @@ fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
 /// Parse JSON output and return the value
 pub fn parse_json(output: &Output) -> serde_json::Value {
     let stdout = String::from_utf8_lossy(&output.stdout);
-    serde_json::from_str(&stdout).unwrap_or_else(|e| {
-        panic!("Invalid JSON output:\n{}\nError: {}", stdout, e)
-    })
+    serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("Invalid JSON output:\n{}\nError: {}", stdout, e))
 }
 
 /// Assert stdout contains a substring

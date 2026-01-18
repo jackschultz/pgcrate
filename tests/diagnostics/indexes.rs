@@ -27,7 +27,7 @@ fn test_indexes_detects_duplicate() {
             id SERIAL PRIMARY KEY,
             user_id INTEGER,
             created_at TIMESTAMPTZ
-        )"
+        )",
     );
     db.run_sql_ok("CREATE INDEX dup_test_user_id_idx1 ON dup_test(user_id)");
     db.run_sql_ok("CREATE INDEX dup_test_user_id_idx2 ON dup_test(user_id)");
@@ -58,7 +58,7 @@ fn test_indexes_no_false_duplicate_for_different_columns() {
             id SERIAL PRIMARY KEY,
             user_id INTEGER,
             created_at TIMESTAMPTZ
-        )"
+        )",
     );
     db.run_sql_ok("CREATE INDEX order_test_user_created_idx ON order_test(user_id, created_at)");
     db.run_sql_ok("CREATE INDEX order_test_created_user_idx ON order_test(created_at, user_id)");
@@ -100,14 +100,14 @@ fn test_indexes_detects_missing_fk_index() {
         "CREATE TABLE parent_tbl (
             id SERIAL PRIMARY KEY,
             name TEXT
-        )"
+        )",
     );
     db.run_sql_ok(
         "CREATE TABLE child_tbl (
             id SERIAL PRIMARY KEY,
             parent_id INTEGER REFERENCES parent_tbl(id),
             value TEXT
-        )"
+        )",
     );
     // Note: No index on child_tbl(parent_id) - should be flagged
 
@@ -117,8 +117,11 @@ fn test_indexes_detects_missing_fk_index() {
 
     // Should suggest missing index on FK column
     assert!(
-        out.contains("missing") || out.contains("Missing") || out.contains("parent_id")
-        || out.contains("child_tbl") || out.contains("foreign"),
+        out.contains("missing")
+            || out.contains("Missing")
+            || out.contains("parent_id")
+            || out.contains("child_tbl")
+            || out.contains("foreign"),
         "Should detect missing FK index: {}",
         out
     );
@@ -137,14 +140,14 @@ fn test_indexes_no_missing_when_fk_has_index() {
         "CREATE TABLE indexed_parent (
             id SERIAL PRIMARY KEY,
             name TEXT
-        )"
+        )",
     );
     db.run_sql_ok(
         "CREATE TABLE indexed_child (
             id SERIAL PRIMARY KEY,
             parent_id INTEGER REFERENCES indexed_parent(id),
             value TEXT
-        )"
+        )",
     );
     db.run_sql_ok("CREATE INDEX indexed_child_parent_id_idx ON indexed_child(parent_id)");
 
@@ -156,9 +159,9 @@ fn test_indexes_no_missing_when_fk_has_index() {
 
     // Check missing array - should not flag indexed_child
     if let Some(missing) = json.get("missing").and_then(|m| m.as_array()) {
-        let has_indexed_child = missing.iter().any(|m| {
-            m.to_string().contains("indexed_child")
-        });
+        let has_indexed_child = missing
+            .iter()
+            .any(|m| m.to_string().contains("indexed_child"));
         assert!(
             !has_indexed_child,
             "FK with index should not be flagged as missing: {:?}",
@@ -185,7 +188,9 @@ fn test_indexes_json_structure() {
 
     // Should have expected top-level keys
     assert!(
-        json.get("missing").is_some() || json.get("unused").is_some() || json.get("duplicates").is_some(),
+        json.get("missing").is_some()
+            || json.get("unused").is_some()
+            || json.get("duplicates").is_some(),
         "JSON should have missing, unused, or duplicates: {}",
         json
     );
@@ -249,7 +254,7 @@ fn test_indexes_excludes_primary_keys_from_duplicates() {
         "CREATE TABLE pk_test (
             id SERIAL PRIMARY KEY,
             name TEXT
-        )"
+        )",
     );
     // Add another index on id - this IS a duplicate of the PK index
     db.run_sql_ok("CREATE INDEX pk_test_id_idx ON pk_test(id)");

@@ -67,8 +67,11 @@ fn test_triage_output_format() {
     let out = stdout(&output);
     // Should have structured output with status indicators
     assert!(
-        out.contains("✓") || out.contains("OK") || out.contains("HEALTHY")
-        || out.contains("healthy") || out.contains("pass"),
+        out.contains("✓")
+            || out.contains("OK")
+            || out.contains("HEALTHY")
+            || out.contains("healthy")
+            || out.contains("pass"),
         "Should show health status: {}",
         out
     );
@@ -179,8 +182,11 @@ fn test_sequences_shows_sequence_info() {
     // Should list sequence information
     // The users_id_seq is created by SERIAL
     assert!(
-        out.contains("users_id_seq") || out.contains("sequence") || out.contains("SERIAL")
-        || out.contains("healthy") || out.contains("No sequences"),
+        out.contains("users_id_seq")
+            || out.contains("sequence")
+            || out.contains("SERIAL")
+            || out.contains("healthy")
+            || out.contains("No sequences"),
         "Should show sequence info: {}",
         out
     );
