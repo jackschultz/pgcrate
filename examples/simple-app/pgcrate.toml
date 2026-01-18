@@ -1,0 +1,10 @@
+# pgcrate configuration
+# See: https://github.com/jackschultz/pgcrate
+
+[database]
+# Update this with your database connection string
+url = "postgres://localhost/simple_app_dev"
+
+[paths]
+migrations = "db/migrations"
+seeds = "db/seeds"
