@@ -115,7 +115,7 @@ pub async fn get_table_xid(client: &Client, limit: usize) -> Result<Vec<TableXid
             pg_size_pretty(pg_total_relation_size(s.relid)) as size
         FROM pg_stat_user_tables s
         JOIN pg_class c ON s.relid = c.oid
-        WHERE c.relfrozenxid::text::int != 0
+        WHERE c.relfrozenxid <> '0'::xid
         ORDER BY age(c.relfrozenxid) DESC
         LIMIT $1
     "#;

@@ -194,6 +194,8 @@ pub async fn get_duplicate_indexes(client: &Client) -> Result<Vec<DuplicateIndex
             LEFT JOIN pg_stat_user_indexes s ON s.indexrelid = ix.indexrelid
             WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
               AND NOT ix.indisexclusion
+              AND NOT (0 = ANY(ix.indkey))  -- exclude expression indexes
+              AND ix.indpred IS NULL        -- exclude partial indexes
             GROUP BY n.nspname, t.relname, i.relname, ix.indisunique, ix.indisprimary,
                      i.oid, s.idx_scan
         ),

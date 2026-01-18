@@ -73,7 +73,7 @@ struct Cli {
     database_url: Option<String>,
 
     /// Named connection from pgcrate.toml [connections] section
-    #[arg(short = 'c', long = "connection", global = true)]
+    #[arg(short = 'C', long = "connection", global = true)]
     connection: Option<String>,
 
     /// Environment variable name containing DATABASE_URL (e.g., PROD_DATABASE_URL)
