@@ -1,0 +1,4 @@
+id,email,name,is_admin,created_at
+1,admin@example.com,Admin User,true,2024-01-01 00:00:00+00
+2,alice@example.com,Alice Smith,false,2024-01-02 00:00:00+00
+3,bob@example.com,Bob Jones,false,2024-01-03 00:00:00+00

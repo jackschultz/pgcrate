@@ -4,8 +4,12 @@ on:
   push:
   pull_request:
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  test:
+  # Fast checks that don't need a database
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,9 +26,52 @@ jobs:
       - name: clippy
         run: cargo clippy -- -D warnings
 
-      - name: test
+      - name: unit tests
         run: cargo test --bins
 
       - name: package
         run: cargo package
 
+  # Integration tests against PostgreSQL
+  integration:
+    runs-on: ubuntu-latest
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ['14', '15', '16']
+
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: pgcrate_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install psql client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Build
+        run: cargo build
+
+      - name: Integration tests
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/pgcrate_test
+        run: cargo test --test integration

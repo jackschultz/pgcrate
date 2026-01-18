@@ -1,0 +1,8 @@
+[database]
+# Set via DATABASE_URL environment variable or override here
+# url = "postgres://postgres:postgres@localhost:5432/ecommerce_dev"
+
+[paths]
+migrations = "db/migrations"
+models = "models"
+seeds = "seeds"

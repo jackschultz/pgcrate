@@ -1,0 +1,6 @@
+[database]
+url = "postgres://localhost/test"
+
+[paths]
+migrations = "db/migrations"
+models = "models"

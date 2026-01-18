@@ -1,0 +1,7 @@
+# Test fixture - config is overwritten by test harness
+[database]
+url = "postgres://localhost/test"
+
+[paths]
+migrations = "db/migrations"
+seeds = "db/seeds"

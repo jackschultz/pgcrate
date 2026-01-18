@@ -1,0 +1,4 @@
+email,name,is_admin
+admin@example.com,Admin User,true
+alice@example.com,Alice Smith,false
+bob@example.com,Bob Jones,false
