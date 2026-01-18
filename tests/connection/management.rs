@@ -9,6 +9,26 @@
 use std::process::Command;
 use crate::common::{stderr, stdout, TestDatabase, TestProject};
 
+/// Extract host:port from a database URL for use in error scenario tests.
+/// Returns (host, port) parsed from postgres://user:pass@host:port/db
+fn extract_host_port(url: &str) -> (String, String) {
+    // Find @host:port/
+    if let Some(at_idx) = url.find('@') {
+        let after_at = &url[at_idx + 1..];
+        if let Some(slash_idx) = after_at.find('/') {
+            let host_port = &after_at[..slash_idx];
+            if let Some(colon_idx) = host_port.rfind(':') {
+                return (
+                    host_port[..colon_idx].to_string(),
+                    host_port[colon_idx + 1..].to_string(),
+                );
+            }
+            return (host_port.to_string(), "5432".to_string());
+        }
+    }
+    ("localhost".to_string(), "5432".to_string())
+}
+
 // ============================================================================
 // Named connections (-C)
 // ============================================================================
@@ -205,10 +225,11 @@ fn test_connection_wrong_password() {
     let config = "[paths]\nmigrations = \"db/migrations\"\n";
     std::fs::write(project.path("pgcrate.toml"), config).unwrap();
 
-    // URL with wrong password
+    // URL with wrong password - derive host:port from actual test URL
+    let (host, port) = extract_host_port(db.url());
     let bad_url = format!(
-        "postgres://postgres:wrongpassword@localhost:5432/{}",
-        &db.name
+        "postgres://postgres:wrongpassword@{}:{}/{}",
+        host, port, &db.name
     );
 
     let output = project.run_pgcrate(&["doctor", "-d", &bad_url]);
@@ -243,10 +264,11 @@ fn test_connection_host_unreachable() {
     let config = "[paths]\nmigrations = \"db/migrations\"\n";
     std::fs::write(project.path("pgcrate.toml"), config).unwrap();
 
-    // URL with unreachable host (use localhost but wrong port)
-    let bad_url = "postgres://postgres:postgres@localhost:59999/test";
+    // URL with unreachable port - derive host from actual test URL
+    let (host, _port) = extract_host_port(db.url());
+    let bad_url = format!("postgres://postgres:postgres@{}:59999/test", host);
 
-    let output = project.run_pgcrate(&["doctor", "-d", bad_url]);
+    let output = project.run_pgcrate(&["doctor", "-d", &bad_url]);
 
     assert!(
         !output.status.success(),
@@ -277,10 +299,14 @@ fn test_connection_database_not_found() {
     let config = "[paths]\nmigrations = \"db/migrations\"\n";
     std::fs::write(project.path("pgcrate.toml"), config).unwrap();
 
-    // URL with non-existent database
-    let bad_url = "postgres://postgres:postgres@localhost:5432/nonexistent_db_12345";
+    // URL with non-existent database - derive host:port from actual test URL
+    let (host, port) = extract_host_port(db.url());
+    let bad_url = format!(
+        "postgres://postgres:postgres@{}:{}/nonexistent_db_12345",
+        host, port
+    );
 
-    let output = project.run_pgcrate(&["doctor", "-d", bad_url]);
+    let output = project.run_pgcrate(&["doctor", "-d", &bad_url]);
 
     assert!(
         !output.status.success(),

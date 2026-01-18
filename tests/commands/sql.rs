@@ -14,12 +14,13 @@ fn test_sql_executes_select() {
     let db = TestDatabase::new();
     let project = TestProject::from_fixture("with_migrations", &db);
 
-    let output = project.run_pgcrate_ok(&["sql", "-c", "SELECT 1 AS result"]);
+    let output = project.run_pgcrate_ok(&["sql", "-c", "SELECT 42 AS answer"]);
 
     let out = stdout(&output);
+    // Must contain both the column name and the value
     assert!(
-        out.contains("1") || out.contains("result"),
-        "Should return query result: {}",
+        out.contains("42") && out.contains("answer"),
+        "Should return query result with column 'answer' and value '42': {}",
         out
     );
 }

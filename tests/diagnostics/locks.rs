@@ -51,15 +51,17 @@ fn test_locks_healthy_no_blocking() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    // With no active transactions, locks should show healthy state
+    // With no active transactions, locks should succeed (exit 0)
+    // run_pgcrate_ok already asserts success
     let output = project.run_pgcrate_ok(&["locks"]);
 
     let out = stdout(&output);
-    // Should complete without error, may show "no blocking" or similar
+    let err = stderr(&output);
+    // Should NOT contain error indicators
     assert!(
-        out.contains("No blocking") || out.contains("healthy") || out.is_empty() || out.contains("Lock"),
-        "Locks should show no issues when database is idle: {}",
-        out
+        !err.to_lowercase().contains("error") || err.contains("0 error"),
+        "Locks should not report errors when idle: stdout={}, stderr={}",
+        out, err
     );
 }
 
@@ -74,16 +76,19 @@ fn test_locks_json_output_structure() {
     let output = project.run_pgcrate_ok(&["locks", "--json"]);
 
     let out = stdout(&output);
-    if out.starts_with('{') || out.starts_with('[') {
-        let json = parse_json(&output);
-        // JSON output should be an object or array
-        assert!(
-            json.is_object() || json.is_array(),
-            "JSON should be object or array: {}",
-            out
-        );
-    }
-    // If no JSON support, that's okay
+    // --json flag MUST produce valid JSON
+    assert!(
+        out.trim().starts_with('{') || out.trim().starts_with('['),
+        "locks --json must produce JSON output, got: {}",
+        out
+    );
+
+    let json = parse_json(&output);
+    assert!(
+        json.is_object() || json.is_array(),
+        "JSON should be object or array: {}",
+        out
+    );
 }
 
 #[test]
@@ -344,12 +349,16 @@ fn test_locks_json_with_blocking_flag() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    // Combine --json and --blocking
+    // Combine --json and --blocking - must produce valid JSON
     let output = project.run_pgcrate_ok(&["locks", "--json", "--blocking"]);
 
     let out = stdout(&output);
-    if out.starts_with('{') || out.starts_with('[') {
-        // Valid JSON
-        let _ = parse_json(&output);
-    }
+    assert!(
+        out.trim().starts_with('{') || out.trim().starts_with('['),
+        "locks --json --blocking must produce JSON output, got: {}",
+        out
+    );
+
+    // Verify it's valid JSON
+    let _ = parse_json(&output);
 }

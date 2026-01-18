@@ -3,11 +3,16 @@
 //! Tests verify that pgcrate provides clear error messages when
 //! operations fail due to insufficient database permissions.
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use crate::common::{stderr, stdout, TestDatabase, TestProject};
 
+static USER_COUNTER: AtomicU32 = AtomicU32::new(0);
+
 /// Create a read-only user and return a connection URL for that user.
+/// Username is unique per test to avoid parallelism hazards.
 fn create_readonly_user(db: &TestDatabase) -> Option<String> {
-    let username = format!("readonly_{}", std::process::id());
+    let count = USER_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let username = format!("ro_{}_{}", std::process::id(), count);
     let password = "readonly_test_pass";
 
     // Create user

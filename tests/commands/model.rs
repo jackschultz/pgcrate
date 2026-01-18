@@ -147,13 +147,20 @@ fn test_model_status_json_output() {
 
     let output = project.run_pgcrate(&["model", "status", "--json"]);
 
-    // Model status may or may not support --json
     let out = stdout(&output);
-    if out.starts_with('{') || out.starts_with('[') {
+    let err = stderr(&output);
+
+    // --json should produce JSON if the command supports it
+    // If command fails, that's acceptable (non-synced models)
+    // But if it succeeds, output must be JSON
+    if output.status.success() && !out.trim().is_empty() {
+        assert!(
+            out.trim().starts_with('{') || out.trim().starts_with('['),
+            "model status --json should produce JSON when successful: stdout={}, stderr={}",
+            out, err
+        );
         let _json = parse_json(&output);
-        // Valid JSON
     }
-    // If no JSON support, that's okay
 }
 
 // ============================================================================

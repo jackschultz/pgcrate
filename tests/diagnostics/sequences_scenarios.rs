@@ -8,7 +8,7 @@
 //! - 1: At least one sequence at warning level (>= warn%, < crit%)
 //! - 2: At least one sequence at critical level (>= crit%)
 
-use crate::common::{stdout, TestDatabase, TestProject};
+use crate::common::{stderr, stdout, TestDatabase, TestProject};
 
 /// Create a sequence and set it to a specific percentage of capacity.
 ///
@@ -77,7 +77,10 @@ fn test_sequences_healthy_at_69_percent() {
     assert_eq!(
         output.status.code(),
         Some(0),
-        "69% should be healthy (exit 0)"
+        "69% should be healthy (exit 0), got {:?}\nstdout: {}\nstderr: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
 }
 
@@ -124,7 +127,10 @@ fn test_sequences_warning_at_84_percent() {
     assert_eq!(
         output.status.code(),
         Some(1),
-        "84% should be warning (exit 1)"
+        "84% should be warning (exit 1), got {:?}\nstdout: {}\nstderr: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
 }
 
@@ -171,7 +177,10 @@ fn test_sequences_critical_at_99_percent() {
     assert_eq!(
         output.status.code(),
         Some(2),
-        "99% should be critical (exit 2)"
+        "99% should be critical (exit 2), got {:?}\nstdout: {}\nstderr: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
 }
 
@@ -269,18 +278,21 @@ fn test_sequences_output_shows_percentage() {
     let output = project.run_pgcrate(&["sequences", "--all"]);
 
     let out = stdout(&output);
+    let err = stderr(&output);
 
     // Should show the sequence name
     assert!(
         out.contains("test_seq_pct"),
-        "Output should show sequence name: {}",
-        out
+        "Output should show sequence name: stdout={}, stderr={}",
+        out, err
     );
 
-    // Should show percentage (roughly 75%)
+    // Should show percentage around 75% (74-76 acceptable due to rounding)
+    // Format may include decimal: "75.0%" or "75%"
     assert!(
-        out.contains("7") && out.contains("%"),
-        "Output should show percentage: {}",
-        out
+        out.contains("74.") || out.contains("75.") || out.contains("76.")
+            || out.contains("74%") || out.contains("75%") || out.contains("76%"),
+        "Output should show percentage around 75%: stdout={}, stderr={}",
+        out, err
     );
 }

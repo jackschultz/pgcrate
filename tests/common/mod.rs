@@ -49,16 +49,16 @@ impl TestDatabase {
             .args([
                 &admin_url_for_commands,
                 "-c",
-                &format!("DROP DATABASE IF EXISTS {}", name),
+                &format!("DROP DATABASE IF EXISTS \"{}\"", name),
             ])
             .output();
 
-        // Create the test database
+        // Create the test database (quoted identifier for safety)
         let output = Command::new("psql")
             .args([
                 &admin_url_for_commands,
                 "-c",
-                &format!("CREATE DATABASE {}", name),
+                &format!("CREATE DATABASE \"{}\"", name),
             ])
             .output()
             .expect("Failed to create test database");
@@ -105,10 +105,10 @@ impl TestDatabase {
         output
     }
 
-    /// Query and return stdout
+    /// Query and return stdout (unaligned, tuples only)
     pub fn query(&self, sql: &str) -> String {
         let output = Command::new("psql")
-            .args([&self.url, "-t", "-c", sql])
+            .args([&self.url, "-t", "-A", "-c", sql])
             .output()
             .expect("Failed to run query");
         String::from_utf8_lossy(&output.stdout).trim().to_string()
@@ -141,32 +141,30 @@ impl Drop for TestDatabase {
         // 1. Cleanup failures shouldn't fail tests
         // 2. Leftover test databases are harmless and can be manually cleaned
         // 3. In CI, the container is destroyed anyway
-        let name = self.name.clone();
-        let admin_url = self.admin_url.clone();
 
-        std::thread::spawn(move || {
-            // Terminate any remaining connections to allow DROP
-            let _ = Command::new("psql")
-                .args([
-                    &admin_url,
-                    "-c",
-                    &format!(
-                        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{}'",
-                        name
-                    ),
-                ])
-                .output();
+        // Terminate any remaining connections to allow DROP
+        let _ = Command::new("psql")
+            .args([
+                &self.admin_url,
+                "-c",
+                &format!(
+                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{}'",
+                    self.name
+                ),
+            ])
+            .output();
 
-            // Brief delay for connections to close
-            std::thread::sleep(Duration::from_millis(50));
+        // Brief delay for connections to close
+        std::thread::sleep(Duration::from_millis(50));
 
-            // Drop the test database
-            let _ = Command::new("psql")
-                .args([&admin_url, "-c", &format!("DROP DATABASE IF EXISTS {}", name)])
-                .output();
-        })
-        .join()
-        .ok();
+        // Drop the test database (quoted identifier for safety)
+        let _ = Command::new("psql")
+            .args([
+                &self.admin_url,
+                "-c",
+                &format!("DROP DATABASE IF EXISTS \"{}\"", self.name),
+            ])
+            .output();
     }
 }
 
