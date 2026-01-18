@@ -83,7 +83,7 @@ pub async fn get_database_xid(client: &Client) -> Result<Vec<DatabaseXid>> {
         SELECT
             datname,
             age(datfrozenxid)::bigint as xid_age,
-            round(100.0 * age(datfrozenxid) / 2147483647, 2) as pct_used
+            round(100.0 * age(datfrozenxid) / 2147483647, 2)::float8 as pct_used
         FROM pg_database
         WHERE datallowconn
         ORDER BY age(datfrozenxid) DESC
@@ -109,13 +109,14 @@ pub async fn get_database_xid(client: &Client) -> Result<Vec<DatabaseXid>> {
 pub async fn get_table_xid(client: &Client, limit: usize) -> Result<Vec<TableXid>> {
     let query = r#"
         SELECT
-            schemaname,
-            relname,
-            age(relfrozenxid)::bigint as xid_age,
-            pg_size_pretty(pg_total_relation_size(relid)) as size
-        FROM pg_stat_user_tables
-        WHERE relfrozenxid::text::int != 0
-        ORDER BY age(relfrozenxid) DESC
+            s.schemaname,
+            s.relname,
+            age(c.relfrozenxid)::bigint as xid_age,
+            pg_size_pretty(pg_total_relation_size(s.relid)) as size
+        FROM pg_stat_user_tables s
+        JOIN pg_class c ON s.relid = c.oid
+        WHERE c.relfrozenxid::text::int != 0
+        ORDER BY age(c.relfrozenxid) DESC
         LIMIT $1
     "#;
 

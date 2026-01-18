@@ -74,13 +74,13 @@ pub async fn get_sequences(
         SELECT
             schemaname,
             sequencename,
-            data_type,
+            data_type::text as data_type,
             COALESCE(last_value, 0) as last_value,
             max_value,
             CASE
                 WHEN increment_by > 0 AND max_value > 0 AND last_value IS NOT NULL
-                THEN round(100.0 * last_value / max_value, 2)
-                ELSE 0
+                THEN round(100.0 * last_value / max_value, 2)::float8
+                ELSE 0::float8
             END as pct_used
         FROM pg_sequences
         ORDER BY pct_used DESC
