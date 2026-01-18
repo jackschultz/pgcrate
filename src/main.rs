@@ -37,6 +37,8 @@ fn json_supported(command: &Commands) -> bool {
         Commands::Doctor { .. } => true,
         Commands::Triage => true,
         Commands::Locks { .. } => true,
+        Commands::Xid { .. } => true,
+        Commands::Sequences { .. } => true,
         Commands::Sql { .. } => true,
         Commands::Snapshot { command } => matches!(
             command,
@@ -249,6 +251,24 @@ enum Commands {
         /// Actually execute cancel/kill (default is dry-run)
         #[arg(long)]
         execute: bool,
+    },
+    /// Monitor transaction ID (XID) age to prevent wraparound
+    Xid {
+        /// Number of tables to show (default: 10)
+        #[arg(long, default_value = "10")]
+        tables: usize,
+    },
+    /// Monitor sequence exhaustion risk
+    Sequences {
+        /// Warning threshold percentage (default: 70)
+        #[arg(long, value_name = "PCT")]
+        warn: Option<i32>,
+        /// Critical threshold percentage (default: 85)
+        #[arg(long, value_name = "PCT")]
+        crit: Option<i32>,
+        /// Show all sequences, not just problematic ones
+        #[arg(long)]
+        all: bool,
     },
     /// Run arbitrary SQL against the database (alias: query)
     #[command(alias = "query")]
@@ -1151,6 +1171,62 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 }
             }
         }
+        Commands::Xid { tables } => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
+            let client = commands::connect(&conn_result.url).await?;
+            let result = commands::xid::run_xid(&client, tables).await?;
+
+            if cli.json {
+                commands::xid::print_json(&result)?;
+            } else {
+                commands::xid::print_human(&result, cli.quiet);
+            }
+
+            // Exit with appropriate code
+            match result.overall_status {
+                commands::xid::XidStatus::Critical => std::process::exit(2),
+                commands::xid::XidStatus::Warning => std::process::exit(1),
+                commands::xid::XidStatus::Healthy => {}
+            }
+        }
+        Commands::Sequences { warn, crit, all } => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
+            let client = commands::connect(&conn_result.url).await?;
+            let result = commands::sequences::run_sequences(&client, warn, crit).await?;
+
+            if cli.json {
+                commands::sequences::print_json(&result)?;
+            } else {
+                commands::sequences::print_human(&result, cli.quiet, all);
+            }
+
+            // Exit with appropriate code
+            match result.overall_status {
+                commands::sequences::SeqStatus::Critical => std::process::exit(2),
+                commands::sequences::SeqStatus::Warning => std::process::exit(1),
+                commands::sequences::SeqStatus::Healthy => {}
+            }
+        }
         Commands::Sql {
             command,
             allow_write,
@@ -1517,6 +1593,8 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 | Commands::Doctor { .. }
                 | Commands::Triage
                 | Commands::Locks { .. }
+                | Commands::Xid { .. }
+                | Commands::Sequences { .. }
                 | Commands::Sql { .. }
                 | Commands::Db { .. }
                 | Commands::Snapshot { .. }
