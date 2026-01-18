@@ -35,6 +35,7 @@ fn json_supported(command: &Commands) -> bool {
         Commands::Describe { .. } => true,
         Commands::Diff { .. } => true,
         Commands::Doctor { .. } => true,
+        Commands::Triage => true,
         Commands::Sql { .. } => true,
         Commands::Snapshot { command } => matches!(
             command,
@@ -225,6 +226,8 @@ enum Commands {
         #[arg(long)]
         strict: bool,
     },
+    /// Quick database health triage (locks, transactions, XID, sequences, connections)
+    Triage,
     /// Run arbitrary SQL against the database (alias: query)
     #[command(alias = "query")]
     Sql {
@@ -1017,6 +1020,32 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 std::process::exit(exit_code);
             }
         }
+        Commands::Triage => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
+            let client = commands::connect(&conn_result.url).await?;
+            let results = commands::triage::run_triage(&client).await;
+
+            if cli.json {
+                commands::triage::print_json(&results)?;
+            } else {
+                commands::triage::print_human(&results, cli.quiet);
+            }
+
+            let exit_code = results.exit_code();
+            if exit_code != 0 {
+                std::process::exit(exit_code);
+            }
+        }
         Commands::Sql {
             command,
             allow_write,
@@ -1381,6 +1410,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 | Commands::Model { .. }
                 | Commands::Init { .. }
                 | Commands::Doctor { .. }
+                | Commands::Triage
                 | Commands::Sql { .. }
                 | Commands::Db { .. }
                 | Commands::Snapshot { .. }

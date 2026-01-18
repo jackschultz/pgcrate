@@ -14,6 +14,7 @@ mod schema;
 mod seed;
 mod snapshot;
 mod sql_cmd;
+pub mod triage;
 
 // Re-export snapshot commands from new module
 pub use snapshot::{
