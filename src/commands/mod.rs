@@ -7,13 +7,18 @@ mod bootstrap;
 mod db;
 mod doctor;
 mod extension;
+pub mod indexes;
+pub mod locks;
 mod migrations;
 pub mod model;
 mod role;
 mod schema;
 mod seed;
+pub mod sequences;
 mod snapshot;
 mod sql_cmd;
+pub mod triage;
+pub mod xid;
 
 // Re-export snapshot commands from new module
 pub use snapshot::{

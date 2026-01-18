@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
+use crate::connection::{ConnectionConfig, PolicyConfig};
+
 /// Main configuration structure loaded from pgcrate.toml
 #[derive(Deserialize, Default, Debug)]
 pub struct Config {
@@ -16,6 +18,11 @@ pub struct Config {
     pub model: Option<ModelConfig>,
     pub seeds: Option<SeedsConfig>,
     pub tools: Option<ToolsConfig>,
+    /// Named database connections
+    #[serde(default)]
+    pub connections: HashMap<String, ConnectionConfig>,
+    /// Policy restrictions for connections
+    pub policy: Option<PolicyConfig>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -232,6 +239,56 @@ impl Config {
         }
 
         None
+    }
+
+    /// Resolve database URL with full connection support.
+    ///
+    /// Resolution order:
+    /// 1. -d / --database-url (direct URL)
+    /// 2. -c / --connection (named connection from config)
+    /// 3. --env (environment variable name)
+    /// 4. DATABASE_URL environment variable
+    /// 5. [database].url in config
+    ///
+    /// Returns the resolved URL and optional connection metadata.
+    pub fn resolve_database_url(
+        &self,
+        cli_url: Option<&str>,
+        connection_name: Option<&str>,
+        env_var_name: Option<&str>,
+    ) -> Result<(String, Option<crate::connection::ResolvedConnection>)> {
+        use crate::connection::{resolve_connection, resolve_from_env_var};
+
+        // 1. Direct URL from CLI takes absolute precedence
+        if let Some(url) = cli_url {
+            return Ok((url.to_string(), None));
+        }
+
+        // 2. Named connection from config
+        if let Some(name) = connection_name {
+            let conn = resolve_connection(name, &self.connections, self.policy.as_ref())?;
+            return Ok((conn.url.clone(), Some(conn)));
+        }
+
+        // 3. Environment variable name
+        if let Some(env_name) = env_var_name {
+            let conn = resolve_from_env_var(env_name)?;
+            return Ok((conn.url.clone(), Some(conn)));
+        }
+
+        // 4. Default DATABASE_URL
+        if let Ok(url) = std::env::var("DATABASE_URL") {
+            return Ok((url, None));
+        }
+
+        // 5. Config file
+        if let Some(ref db) = self.database {
+            if let Some(ref url) = db.url {
+                return Ok((url.clone(), None));
+            }
+        }
+
+        bail!("DATABASE_URL not set. Use -d flag, -c <connection>, --env <VAR>, set DATABASE_URL env var, or add to pgcrate.toml")
     }
 
     /// Get migrations directory path

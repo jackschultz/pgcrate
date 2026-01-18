@@ -5,6 +5,7 @@ use std::path::PathBuf;
 mod anonymize;
 mod commands;
 mod config;
+mod connection;
 mod describe;
 mod diff;
 mod doctor;
@@ -34,6 +35,11 @@ fn json_supported(command: &Commands) -> bool {
         Commands::Describe { .. } => true,
         Commands::Diff { .. } => true,
         Commands::Doctor { .. } => true,
+        Commands::Triage => true,
+        Commands::Locks { .. } => true,
+        Commands::Xid { .. } => true,
+        Commands::Sequences { .. } => true,
+        Commands::Indexes { .. } => true,
         Commands::Sql { .. } => true,
         Commands::Snapshot { command } => matches!(
             command,
@@ -65,6 +71,22 @@ struct Cli {
     /// Database URL (overrides DATABASE_URL env var and config file)
     #[arg(short = 'd', long = "database-url", global = true)]
     database_url: Option<String>,
+
+    /// Named connection from pgcrate.toml [connections] section
+    #[arg(short = 'C', long = "connection", global = true)]
+    connection: Option<String>,
+
+    /// Environment variable name containing DATABASE_URL (e.g., PROD_DATABASE_URL)
+    #[arg(long = "env", global = true)]
+    env_var: Option<String>,
+
+    /// Confirm connection to primary database (required for role=primary connections)
+    #[arg(long = "primary", global = true)]
+    allow_primary: bool,
+
+    /// Use read-write mode (default is read-only for diagnostic commands)
+    #[arg(long = "read-write", global = true)]
+    read_write: bool,
 
     /// Path to config file (default: ./pgcrate.toml)
     #[arg(long = "config", global = true)]
@@ -207,6 +229,56 @@ enum Commands {
         /// Treat warnings as errors (exit 1 on warnings)
         #[arg(long)]
         strict: bool,
+    },
+    /// Quick database health triage (locks, transactions, XID, sequences, connections)
+    Triage,
+    /// Inspect blocking locks and long transactions
+    Locks {
+        /// Show only blocking chains
+        #[arg(long)]
+        blocking: bool,
+        /// Show transactions running longer than N minutes (default: 5)
+        #[arg(long, value_name = "MINUTES")]
+        long_tx: Option<u64>,
+        /// Show idle-in-transaction sessions
+        #[arg(long)]
+        idle_in_tx: bool,
+        /// Cancel query for PID (pg_cancel_backend)
+        #[arg(long, value_name = "PID")]
+        cancel: Option<i32>,
+        /// Terminate connection for PID (pg_terminate_backend)
+        #[arg(long, value_name = "PID")]
+        kill: Option<i32>,
+        /// Actually execute cancel/kill (default is dry-run)
+        #[arg(long)]
+        execute: bool,
+    },
+    /// Monitor transaction ID (XID) age to prevent wraparound
+    Xid {
+        /// Number of tables to show (default: 10)
+        #[arg(long, default_value = "10")]
+        tables: usize,
+    },
+    /// Monitor sequence exhaustion risk
+    Sequences {
+        /// Warning threshold percentage (default: 70)
+        #[arg(long, value_name = "PCT")]
+        warn: Option<i32>,
+        /// Critical threshold percentage (default: 85)
+        #[arg(long, value_name = "PCT")]
+        crit: Option<i32>,
+        /// Show all sequences, not just problematic ones
+        #[arg(long)]
+        all: bool,
+    },
+    /// Analyze missing, unused, and duplicate indexes
+    Indexes {
+        /// Number of missing index candidates to show (default: 10)
+        #[arg(long, default_value = "10")]
+        missing_limit: usize,
+        /// Number of unused indexes to show (default: 20)
+        #[arg(long, default_value = "20")]
+        unused_limit: usize,
     },
     /// Run arbitrary SQL against the database (alias: query)
     #[command(alias = "query")]
@@ -1000,17 +1072,215 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 std::process::exit(exit_code);
             }
         }
+        Commands::Triage => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
+            let client = commands::connect(&conn_result.url).await?;
+            let results = commands::triage::run_triage(&client).await;
+
+            if cli.json {
+                commands::triage::print_json(&results)?;
+            } else {
+                commands::triage::print_human(&results, cli.quiet);
+            }
+
+            let exit_code = results.exit_code();
+            if exit_code != 0 {
+                std::process::exit(exit_code);
+            }
+        }
+        Commands::Locks {
+            blocking,
+            long_tx,
+            idle_in_tx,
+            cancel,
+            kill,
+            execute,
+        } => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+
+            // For cancel/kill operations, we need read-write access
+            let needs_write = cancel.is_some() || kill.is_some();
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                needs_write || cli.read_write,
+                cli.quiet,
+            )?;
+            let client = commands::connect(&conn_result.url).await?;
+
+            // Handle cancel/kill operations
+            if let Some(pid) = cancel {
+                commands::locks::cancel_query(&client, pid, execute).await?;
+                return Ok(());
+            }
+            if let Some(pid) = kill {
+                commands::locks::terminate_connection(&client, pid, execute).await?;
+                return Ok(());
+            }
+
+            // Determine what to show (default: show blocking if nothing specified)
+            let show_blocking = blocking || (long_tx.is_none() && !idle_in_tx);
+            let show_long_tx = long_tx.is_some();
+            let show_idle = idle_in_tx;
+
+            let mut result = commands::locks::LocksResult {
+                blocking_chains: vec![],
+                long_transactions: vec![],
+                idle_in_transaction: vec![],
+            };
+
+            if show_blocking {
+                result.blocking_chains = commands::locks::get_blocking_chains(&client).await?;
+            }
+            if show_long_tx {
+                let min_minutes = long_tx.unwrap_or(5);
+                result.long_transactions =
+                    commands::locks::get_long_transactions(&client, min_minutes).await?;
+            }
+            if show_idle {
+                result.idle_in_transaction =
+                    commands::locks::get_idle_in_transaction(&client).await?;
+            }
+
+            if cli.json {
+                commands::locks::print_json(&result)?;
+            } else {
+                if show_blocking {
+                    commands::locks::print_blocking_chains(&result.blocking_chains, cli.quiet);
+                }
+                if show_long_tx {
+                    if show_blocking && !result.blocking_chains.is_empty() {
+                        println!();
+                    }
+                    commands::locks::print_long_transactions(&result.long_transactions, cli.quiet);
+                }
+                if show_idle {
+                    if (show_blocking && !result.blocking_chains.is_empty())
+                        || (show_long_tx && !result.long_transactions.is_empty())
+                    {
+                        println!();
+                    }
+                    commands::locks::print_idle_in_transaction(
+                        &result.idle_in_transaction,
+                        cli.quiet,
+                    );
+                }
+            }
+        }
+        Commands::Xid { tables } => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
+            let client = commands::connect(&conn_result.url).await?;
+            let result = commands::xid::run_xid(&client, tables).await?;
+
+            if cli.json {
+                commands::xid::print_json(&result)?;
+            } else {
+                commands::xid::print_human(&result, cli.quiet);
+            }
+
+            // Exit with appropriate code
+            match result.overall_status {
+                commands::xid::XidStatus::Critical => std::process::exit(2),
+                commands::xid::XidStatus::Warning => std::process::exit(1),
+                commands::xid::XidStatus::Healthy => {}
+            }
+        }
+        Commands::Sequences { warn, crit, all } => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
+            let client = commands::connect(&conn_result.url).await?;
+            let result = commands::sequences::run_sequences(&client, warn, crit).await?;
+
+            if cli.json {
+                commands::sequences::print_json(&result)?;
+            } else {
+                commands::sequences::print_human(&result, cli.quiet, all);
+            }
+
+            // Exit with appropriate code
+            match result.overall_status {
+                commands::sequences::SeqStatus::Critical => std::process::exit(2),
+                commands::sequences::SeqStatus::Warning => std::process::exit(1),
+                commands::sequences::SeqStatus::Healthy => {}
+            }
+        }
+        Commands::Indexes {
+            missing_limit,
+            unused_limit,
+        } => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
+            let client = commands::connect(&conn_result.url).await?;
+            let result =
+                commands::indexes::run_indexes(&client, missing_limit, unused_limit).await?;
+
+            if cli.json {
+                commands::indexes::print_json(&result)?;
+            } else {
+                commands::indexes::print_human(&result, cli.verbose);
+            }
+        }
         Commands::Sql {
             command,
             allow_write,
         } => {
             let config =
                 Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
-            let database_url = config
-                .get_database_url(cli.database_url.as_deref())
-                .context("DATABASE_URL not set. Use -d flag, set DATABASE_URL env var, or add to pgcrate.toml")?;
+            // --allow-write implies --read-write (otherwise writes fail due to read-only URL)
+            let effective_read_write = cli.read_write || allow_write;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                effective_read_write,
+                cli.quiet,
+            )?;
             commands::sql(
-                &database_url,
+                &conn_result.url,
                 command.as_deref(),
                 allow_write,
                 cli.quiet,
@@ -1205,29 +1475,41 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
         Commands::Extension { command } => {
             let config =
                 Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
-            let database_url = config
-                .get_database_url(cli.database_url.as_deref())
-                .context("DATABASE_URL not set. Use -d flag, set DATABASE_URL env var, or add to pgcrate.toml")?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
 
             match command {
                 ExtensionCommands::List { available } => {
-                    commands::extension_list(&database_url, available, cli.quiet).await?;
+                    commands::extension_list(&conn_result.url, available, cli.quiet).await?;
                 }
             }
         }
         Commands::Role { command } => {
             let config =
                 Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
-            let database_url = config
-                .get_database_url(cli.database_url.as_deref())
-                .context("DATABASE_URL not set. Use -d flag, set DATABASE_URL env var, or add to pgcrate.toml")?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
 
             match command {
                 RoleCommands::List { users, groups } => {
-                    commands::role_list(&database_url, users, groups, cli.quiet).await?;
+                    commands::role_list(&conn_result.url, users, groups, cli.quiet).await?;
                 }
                 RoleCommands::Describe { name } => {
-                    commands::role_describe(&database_url, &name, cli.quiet).await?;
+                    commands::role_describe(&conn_result.url, &name, cli.quiet).await?;
                 }
             }
         }
@@ -1238,12 +1520,18 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
         } => {
             let config =
                 Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
-            let database_url = config
-                .get_database_url(cli.database_url.as_deref())
-                .context("DATABASE_URL not set. Use -d flag, set DATABASE_URL env var, or add to pgcrate.toml")?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
 
             commands::grants(
-                &database_url,
+                &conn_result.url,
                 object.as_deref(),
                 schema.as_deref(),
                 role.as_deref(),
@@ -1254,20 +1542,32 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
         Commands::Status => {
             let config =
                 Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
-            let database_url = config
-                .get_database_url(cli.database_url.as_deref())
-                .context("DATABASE_URL not set")?;
-            commands::status(&database_url, &config, output).await?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
+            commands::status(&conn_result.url, &config, output).await?;
         }
         cmd => {
             // Load config file for other commands
             let config =
                 Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
 
-            // Other commands need database
-            let database_url = config
-                .get_database_url(cli.database_url.as_deref())
-                .context("DATABASE_URL not set. Use -d flag, set DATABASE_URL env var, or add to pgcrate.toml")?;
+            // Diagnostic commands use connection resolution
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
 
             match cmd {
                 Commands::Generate {
@@ -1278,7 +1578,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                     exclude_schemas,
                 } => {
                     commands::generate(
-                        &database_url,
+                        &conn_result.url,
                         &config,
                         cli.quiet,
                         split_by.as_deref(),
@@ -1296,7 +1596,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                     exclude_schemas,
                 } => {
                     let exit_code = commands::diff(
-                        from.as_deref().unwrap_or(&database_url),
+                        from.as_deref().unwrap_or(&conn_result.url),
                         &to,
                         output,
                         &schemas,
@@ -1314,7 +1614,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                     no_stats,
                 } => {
                     commands::describe(
-                        &database_url,
+                        &conn_result.url,
                         &object,
                         dependents,
                         dependencies,
@@ -1328,6 +1628,11 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 | Commands::Model { .. }
                 | Commands::Init { .. }
                 | Commands::Doctor { .. }
+                | Commands::Triage
+                | Commands::Locks { .. }
+                | Commands::Xid { .. }
+                | Commands::Sequences { .. }
+                | Commands::Indexes { .. }
                 | Commands::Sql { .. }
                 | Commands::Db { .. }
                 | Commands::Snapshot { .. }
