@@ -278,10 +278,11 @@ pub fn print_human(result: &XidResult, _quiet: bool) {
     }
 }
 
-/// Print XID results as JSON
+/// Print XID results as JSON with schema versioning.
 pub fn print_json(result: &XidResult) -> Result<()> {
-    let json = serde_json::to_string_pretty(result)?;
-    println!("{}", json);
+    use crate::output::{schema, DiagnosticOutput};
+    let output = DiagnosticOutput::new(schema::XID, result);
+    output.print()?;
     Ok(())
 }
 

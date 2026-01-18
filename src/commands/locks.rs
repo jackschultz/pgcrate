@@ -508,10 +508,11 @@ pub fn print_idle_in_transaction(procs: &[LockProcess], quiet: bool) {
     println!("  pgcrate locks --kill <PID> --execute     # Terminate connection");
 }
 
-/// Print results as JSON
+/// Print results as JSON with schema versioning.
 pub fn print_json(result: &LocksResult) -> Result<()> {
-    let json = serde_json::to_string_pretty(result)?;
-    println!("{}", json);
+    use crate::output::{schema, DiagnosticOutput};
+    let output = DiagnosticOutput::new(schema::LOCKS, result);
+    output.print()?;
     Ok(())
 }
 

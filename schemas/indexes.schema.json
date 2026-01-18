@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pgcrate.diagnostics.indexes",
+  "title": "pgcrate indexes output",
+  "description": "Index health analysis: missing, unused, and duplicate indexes",
+  "type": "object",
+  "required": ["ok", "schema_id", "schema_version", "missing", "unused", "duplicates", "total_unused_bytes", "total_unused_size", "total_duplicate_bytes", "total_duplicate_size"],
+  "properties": {
+    "ok": {
+      "type": "boolean",
+      "const": true
+    },
+    "schema_id": {
+      "type": "string",
+      "const": "pgcrate.diagnostics.indexes"
+    },
+    "schema_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "missing": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/missingIndexCandidate" }
+    },
+    "unused": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/unusedIndex" }
+    },
+    "duplicates": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/duplicateIndexSet" }
+    },
+    "total_unused_bytes": { "type": "integer" },
+    "total_unused_size": { "type": "string" },
+    "total_duplicate_bytes": { "type": "integer" },
+    "total_duplicate_size": { "type": "string" }
+  },
+  "$defs": {
+    "missingIndexCandidate": {
+      "type": "object",
+      "required": ["schema", "table", "seq_scan", "seq_tup_read", "idx_scan", "table_size", "table_size_bytes", "scan_ratio"],
+      "properties": {
+        "schema": { "type": "string" },
+        "table": { "type": "string" },
+        "seq_scan": { "type": "integer" },
+        "seq_tup_read": { "type": "integer" },
+        "idx_scan": { "type": "integer" },
+        "table_size": { "type": "string" },
+        "table_size_bytes": { "type": "integer" },
+        "scan_ratio": { "type": "number" }
+      }
+    },
+    "unusedIndex": {
+      "type": "object",
+      "required": ["schema", "table", "index", "index_size", "index_size_bytes", "idx_scan", "is_unique", "is_primary"],
+      "properties": {
+        "schema": { "type": "string" },
+        "table": { "type": "string" },
+        "index": { "type": "string" },
+        "index_size": { "type": "string" },
+        "index_size_bytes": { "type": "integer" },
+        "idx_scan": { "type": "integer" },
+        "is_unique": { "type": "boolean" },
+        "is_primary": { "type": "boolean" }
+      }
+    },
+    "duplicateIndexSet": {
+      "type": "object",
+      "required": ["schema", "table", "columns", "indexes", "wasted_bytes", "wasted_size"],
+      "properties": {
+        "schema": { "type": "string" },
+        "table": { "type": "string" },
+        "columns": { "type": "string" },
+        "indexes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/duplicateIndexInfo" }
+        },
+        "wasted_bytes": { "type": "integer" },
+        "wasted_size": { "type": "string" }
+      }
+    },
+    "duplicateIndexInfo": {
+      "type": "object",
+      "required": ["name", "size", "size_bytes", "is_unique", "is_primary", "idx_scan"],
+      "properties": {
+        "name": { "type": "string" },
+        "size": { "type": "string" },
+        "size_bytes": { "type": "integer" },
+        "is_unique": { "type": "boolean" },
+        "is_primary": { "type": "boolean" },
+        "idx_scan": { "type": "integer" }
+      }
+    }
+  }
+}

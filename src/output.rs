@@ -226,6 +226,53 @@ pub struct DescribeResponse {
 }
 
 // =============================================================================
+// Diagnostic Output (versioned JSON for diagnostic commands)
+// =============================================================================
+
+/// Schema version for diagnostic JSON outputs.
+/// Follows semver: breaking=major, additive=minor, bugfix=patch.
+pub const DIAGNOSTIC_SCHEMA_VERSION: &str = "1.0.0";
+
+/// Wrapper for diagnostic command JSON output.
+/// Includes schema metadata for stable automation and versioning.
+#[derive(Debug, Serialize)]
+pub struct DiagnosticOutput<T: Serialize> {
+    pub ok: bool,
+    pub schema_id: &'static str,
+    pub schema_version: &'static str,
+    #[serde(flatten)]
+    pub data: T,
+}
+
+impl<T: Serialize> DiagnosticOutput<T> {
+    /// Create a new diagnostic output with the given schema ID and data.
+    pub fn new(schema_id: &'static str, data: T) -> Self {
+        Self {
+            ok: true,
+            schema_id,
+            schema_version: DIAGNOSTIC_SCHEMA_VERSION,
+            data,
+        }
+    }
+
+    /// Print this output as JSON to stdout.
+    pub fn print(&self) -> Result<(), serde_json::Error> {
+        let json = serde_json::to_string_pretty(self)?;
+        println!("{}", json);
+        Ok(())
+    }
+}
+
+/// Schema IDs for diagnostic commands.
+pub mod schema {
+    pub const TRIAGE: &str = "pgcrate.diagnostics.triage";
+    pub const LOCKS: &str = "pgcrate.diagnostics.locks";
+    pub const XID: &str = "pgcrate.diagnostics.xid";
+    pub const SEQUENCES: &str = "pgcrate.diagnostics.sequences";
+    pub const INDEXES: &str = "pgcrate.diagnostics.indexes";
+}
+
+// =============================================================================
 // Meta UX JSON Response Types (--help, --version, --help-llm)
 // =============================================================================
 

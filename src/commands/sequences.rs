@@ -252,10 +252,11 @@ pub fn print_human(result: &SequencesResult, quiet: bool, show_all: bool) {
     }
 }
 
-/// Print sequences as JSON
+/// Print sequences as JSON with schema versioning.
 pub fn print_json(result: &SequencesResult) -> Result<()> {
-    let json = serde_json::to_string_pretty(result)?;
-    println!("{}", json);
+    use crate::output::{schema, DiagnosticOutput};
+    let output = DiagnosticOutput::new(schema::SEQUENCES, result);
+    output.print()?;
     Ok(())
 }
 

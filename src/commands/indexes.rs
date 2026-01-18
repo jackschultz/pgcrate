@@ -549,10 +549,11 @@ pub fn print_human(result: &IndexesResult, verbose: bool) {
     }
 }
 
-/// Print index analysis as JSON
+/// Print index analysis as JSON with schema versioning.
 pub fn print_json(result: &IndexesResult) -> Result<()> {
-    let json = serde_json::to_string_pretty(result)?;
-    println!("{}", json);
+    use crate::output::{schema, DiagnosticOutput};
+    let output = DiagnosticOutput::new(schema::INDEXES, result);
+    output.print()?;
     Ok(())
 }
 

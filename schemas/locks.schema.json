@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pgcrate.diagnostics.locks",
+  "title": "pgcrate locks output",
+  "description": "Blocking locks and long-running transaction analysis",
+  "type": "object",
+  "required": ["ok", "schema_id", "schema_version", "blocking_chains", "long_transactions", "idle_in_transaction"],
+  "properties": {
+    "ok": {
+      "type": "boolean",
+      "const": true
+    },
+    "schema_id": {
+      "type": "string",
+      "const": "pgcrate.diagnostics.locks"
+    },
+    "schema_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "blocking_chains": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/blockingChain" }
+    },
+    "long_transactions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/lockProcess" }
+    },
+    "idle_in_transaction": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/lockProcess" }
+    }
+  },
+  "$defs": {
+    "lockProcess": {
+      "type": "object",
+      "required": ["pid", "usename", "application_name", "state", "duration_seconds", "query", "blocking_pids", "blocked_count"],
+      "properties": {
+        "pid": { "type": "integer" },
+        "usename": { "type": "string" },
+        "application_name": { "type": "string" },
+        "client_addr": { "type": ["string", "null"] },
+        "state": { "type": "string" },
+        "wait_event_type": { "type": ["string", "null"] },
+        "wait_event": { "type": ["string", "null"] },
+        "duration_seconds": { "type": "integer" },
+        "query": { "type": "string" },
+        "blocking_pids": {
+          "type": "array",
+          "items": { "type": "integer" }
+        },
+        "blocked_count": { "type": "integer" }
+      }
+    },
+    "blockingChain": {
+      "type": "object",
+      "required": ["root", "blocked", "total_blocked", "oldest_blocked_seconds"],
+      "properties": {
+        "root": { "$ref": "#/$defs/lockProcess" },
+        "blocked": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/lockProcess" }
+        },
+        "total_blocked": { "type": "integer" },
+        "oldest_blocked_seconds": { "type": "integer" }
+      }
+    }
+  }
+}

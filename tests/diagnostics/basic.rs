@@ -49,7 +49,19 @@ fn test_triage_json_structure() {
     let json = parse_json(&output);
     assert!(json.is_object(), "Should return JSON object");
 
-    // Should have expected fields
+    // Schema versioning fields
+    assert_eq!(json.get("ok"), Some(&serde_json::json!(true)));
+    assert_eq!(
+        json.get("schema_id"),
+        Some(&serde_json::json!("pgcrate.diagnostics.triage"))
+    );
+    assert!(
+        json.get("schema_version").is_some(),
+        "JSON should have schema_version: {}",
+        json
+    );
+
+    // Data fields (flattened from result)
     assert!(
         json.get("overall_status").is_some(),
         "JSON should have overall_status: {}",

@@ -645,10 +645,11 @@ pub fn print_human(results: &TriageResults, quiet: bool) {
     }
 }
 
-/// Print triage results as JSON
+/// Print triage results as JSON with schema versioning.
 pub fn print_json(results: &TriageResults) -> Result<()> {
-    let json = serde_json::to_string_pretty(results)?;
-    println!("{}", json);
+    use crate::output::{schema, DiagnosticOutput};
+    let output = DiagnosticOutput::new(schema::TRIAGE, results);
+    output.print()?;
     Ok(())
 }
 

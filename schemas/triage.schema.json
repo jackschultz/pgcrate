@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pgcrate.diagnostics.triage",
+  "title": "pgcrate triage output",
+  "description": "Quick health check showing critical issues first",
+  "type": "object",
+  "required": ["ok", "schema_id", "schema_version", "checks", "overall_status"],
+  "properties": {
+    "ok": {
+      "type": "boolean",
+      "const": true,
+      "description": "Always true for successful output"
+    },
+    "schema_id": {
+      "type": "string",
+      "const": "pgcrate.diagnostics.triage"
+    },
+    "schema_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "Semver version of this schema"
+    },
+    "overall_status": {
+      "$ref": "#/$defs/checkStatus",
+      "description": "Worst status across all checks"
+    },
+    "checks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/checkResult" },
+      "description": "Individual health checks"
+    }
+  },
+  "$defs": {
+    "checkStatus": {
+      "type": "string",
+      "enum": ["healthy", "warning", "critical", "error"]
+    },
+    "checkResult": {
+      "type": "object",
+      "required": ["name", "label", "status", "summary"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Machine-readable check identifier"
+        },
+        "label": {
+          "type": "string",
+          "description": "Human-readable label"
+        },
+        "status": { "$ref": "#/$defs/checkStatus" },
+        "summary": {
+          "type": "string",
+          "description": "One-line summary"
+        },
+        "details": {
+          "type": ["string", "null"],
+          "description": "Optional detailed information"
+        },
+        "action": {
+          "type": ["string", "null"],
+          "description": "Suggested drill-down command"
+        }
+      }
+    }
+  }
+}
