@@ -5,6 +5,7 @@ use std::path::PathBuf;
 mod anonymize;
 mod commands;
 mod config;
+mod connection;
 mod describe;
 mod diff;
 mod doctor;
@@ -65,6 +66,22 @@ struct Cli {
     /// Database URL (overrides DATABASE_URL env var and config file)
     #[arg(short = 'd', long = "database-url", global = true)]
     database_url: Option<String>,
+
+    /// Named connection from pgcrate.toml [connections] section
+    #[arg(short = 'c', long = "connection", global = true)]
+    connection: Option<String>,
+
+    /// Environment variable name containing DATABASE_URL (e.g., PROD_DATABASE_URL)
+    #[arg(long = "env", global = true)]
+    env_var: Option<String>,
+
+    /// Confirm connection to primary database (required for role=primary connections)
+    #[arg(long = "primary", global = true)]
+    allow_primary: bool,
+
+    /// Use read-write mode (default is read-only for diagnostic commands)
+    #[arg(long = "read-write", global = true)]
+    read_write: bool,
 
     /// Path to config file (default: ./pgcrate.toml)
     #[arg(long = "config", global = true)]
@@ -1006,11 +1023,17 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
         } => {
             let config =
                 Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
-            let database_url = config
-                .get_database_url(cli.database_url.as_deref())
-                .context("DATABASE_URL not set. Use -d flag, set DATABASE_URL env var, or add to pgcrate.toml")?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
             commands::sql(
-                &database_url,
+                &conn_result.url,
                 command.as_deref(),
                 allow_write,
                 cli.quiet,
@@ -1205,29 +1228,41 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
         Commands::Extension { command } => {
             let config =
                 Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
-            let database_url = config
-                .get_database_url(cli.database_url.as_deref())
-                .context("DATABASE_URL not set. Use -d flag, set DATABASE_URL env var, or add to pgcrate.toml")?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
 
             match command {
                 ExtensionCommands::List { available } => {
-                    commands::extension_list(&database_url, available, cli.quiet).await?;
+                    commands::extension_list(&conn_result.url, available, cli.quiet).await?;
                 }
             }
         }
         Commands::Role { command } => {
             let config =
                 Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
-            let database_url = config
-                .get_database_url(cli.database_url.as_deref())
-                .context("DATABASE_URL not set. Use -d flag, set DATABASE_URL env var, or add to pgcrate.toml")?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
 
             match command {
                 RoleCommands::List { users, groups } => {
-                    commands::role_list(&database_url, users, groups, cli.quiet).await?;
+                    commands::role_list(&conn_result.url, users, groups, cli.quiet).await?;
                 }
                 RoleCommands::Describe { name } => {
-                    commands::role_describe(&database_url, &name, cli.quiet).await?;
+                    commands::role_describe(&conn_result.url, &name, cli.quiet).await?;
                 }
             }
         }
@@ -1238,12 +1273,18 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
         } => {
             let config =
                 Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
-            let database_url = config
-                .get_database_url(cli.database_url.as_deref())
-                .context("DATABASE_URL not set. Use -d flag, set DATABASE_URL env var, or add to pgcrate.toml")?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
 
             commands::grants(
-                &database_url,
+                &conn_result.url,
                 object.as_deref(),
                 schema.as_deref(),
                 role.as_deref(),
@@ -1254,20 +1295,32 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
         Commands::Status => {
             let config =
                 Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
-            let database_url = config
-                .get_database_url(cli.database_url.as_deref())
-                .context("DATABASE_URL not set")?;
-            commands::status(&database_url, &config, output).await?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
+            commands::status(&conn_result.url, &config, output).await?;
         }
         cmd => {
             // Load config file for other commands
             let config =
                 Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
 
-            // Other commands need database
-            let database_url = config
-                .get_database_url(cli.database_url.as_deref())
-                .context("DATABASE_URL not set. Use -d flag, set DATABASE_URL env var, or add to pgcrate.toml")?;
+            // Diagnostic commands use connection resolution
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
 
             match cmd {
                 Commands::Generate {
@@ -1278,7 +1331,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                     exclude_schemas,
                 } => {
                     commands::generate(
-                        &database_url,
+                        &conn_result.url,
                         &config,
                         cli.quiet,
                         split_by.as_deref(),
@@ -1296,7 +1349,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                     exclude_schemas,
                 } => {
                     let exit_code = commands::diff(
-                        from.as_deref().unwrap_or(&database_url),
+                        from.as_deref().unwrap_or(&conn_result.url),
                         &to,
                         output,
                         &schemas,
@@ -1314,7 +1367,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                     no_stats,
                 } => {
                     commands::describe(
-                        &database_url,
+                        &conn_result.url,
                         &object,
                         dependents,
                         dependencies,
