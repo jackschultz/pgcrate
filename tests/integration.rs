@@ -20,12 +20,19 @@
 //!
 //! ## Test Organization
 //!
+//! **Commands:**
 //! - `commands/init.rs` - project initialization
 //! - `commands/migrate.rs` - migration commands (up, down, status, new, baseline)
 //! - `commands/seed.rs` - seed data commands (run, list, validate)
 //! - `commands/describe.rs` - table introspection
 //! - `commands/doctor.rs` - health checks
+//! - `commands/sql.rs` - arbitrary SQL execution
+//! - `commands/model.rs` - model compile, run, status, graph
+//!
+//! **Diagnostics:**
 //! - `diagnostics/basic.rs` - triage, sequences (healthy state)
+//! - `diagnostics/sequences_scenarios.rs` - sequence warning/critical thresholds
+//! - `diagnostics/indexes.rs` - duplicate, missing FK index detection
 
 #[macro_use]
 mod common;
