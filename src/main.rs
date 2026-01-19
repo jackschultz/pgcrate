@@ -77,6 +77,7 @@ fn json_supported(command: &Commands) -> bool {
         Commands::Indexes { .. } => true,
         Commands::Vacuum { .. } => true,
         Commands::Bloat { .. } => true,
+        Commands::Replication => true,
         Commands::Fix { .. } => true,
         Commands::Context => true,
         Commands::Capabilities => true,
@@ -356,6 +357,8 @@ enum Commands {
         #[arg(long, default_value = "10")]
         limit: usize,
     },
+    /// Monitor streaming replication health
+    Replication,
     /// Fix commands for remediation
     Fix {
         #[command(subcommand)]
@@ -1365,6 +1368,42 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 commands::bloat::BloatStatus::Healthy => {}
             }
         }
+        Commands::Replication => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
+
+            let timeout_config = parse_timeout_config(&cli)?;
+            let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
+            setup_ctrlc_handler(session.cancel_token());
+
+            if !cli.quiet && !cli.json {
+                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
+            }
+
+            let result = commands::replication::get_replication(session.client()).await?;
+
+            if cli.json {
+                commands::replication::print_json(&result, Some(session.effective_timeouts()))?;
+            } else {
+                commands::replication::print_human(&result, cli.quiet);
+            }
+
+            // Exit with appropriate code
+            match result.overall_status {
+                commands::replication::ReplicationStatus::Critical => std::process::exit(2),
+                commands::replication::ReplicationStatus::Warning => std::process::exit(1),
+                commands::replication::ReplicationStatus::Healthy => {}
+            }
+        }
         Commands::Fix { ref command } => {
             let config =
                 Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
@@ -2227,6 +2266,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 | Commands::Indexes { .. }
                 | Commands::Vacuum { .. }
                 | Commands::Bloat { .. }
+                | Commands::Replication
                 | Commands::Fix { .. }
                 | Commands::Context
                 | Commands::Capabilities

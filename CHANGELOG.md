@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-**Phase 3b: Bloat Diagnostics**
+**Phase 3b: Bloat + Replication Diagnostics**
 
 ### New Commands
 
@@ -12,6 +12,15 @@
   - Recommendations for VACUUM FULL and REINDEX when critical
   - `--limit` option to control number of results
   - Full JSON support with `pgcrate.diagnostics.bloat` schema
+
+- **`pgcrate replication`**: Monitor streaming replication health
+  - Server role detection (primary vs standby)
+  - Replica lag monitoring (write, flush, replay lag)
+  - Replication slot status and WAL retention
+  - WAL receiver info (standby only)
+  - Warning: replay_lag >30s or inactive slot retaining >1GB
+  - Critical: replay_lag >5min or wal_status='lost'
+  - Full JSON support with `pgcrate.diagnostics.replication` schema
 
 ---
 

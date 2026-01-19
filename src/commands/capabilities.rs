@@ -81,6 +81,7 @@ pub async fn run_capabilities(client: &Client, read_only: bool) -> Result<Capabi
     let has_pg_cancel = check_function_privilege(client, "pg_cancel_backend(int)").await;
     let has_pg_terminate = check_function_privilege(client, "pg_terminate_backend(int)").await;
     let has_pg_stat_statements = check_extension_and_privilege(client, "pg_stat_statements").await;
+    let has_pg_stat_replication = check_privilege(client, "pg_stat_replication", "SELECT").await;
 
     let capabilities = vec![
         // diagnostics.triage - always available (uses minimal queries)
@@ -108,6 +109,8 @@ pub async fn run_capabilities(client: &Client, read_only: bool) -> Result<Capabi
         check_xid_capability(has_pg_database),
         // diagnostics.bloat - needs pg_stat_user_tables and pg_class
         check_bloat_capability(has_pg_stat_user_tables),
+        // diagnostics.replication - needs pg_stat_replication
+        check_replication_capability(has_pg_stat_replication),
         // diagnostics.context - always available
         CapabilityInfo {
             id: "diagnostics.context",
@@ -340,6 +343,39 @@ fn check_indexes_capability(
         reasons,
         requirements,
         limitations,
+    }
+}
+
+fn check_replication_capability(has_pg_stat_replication: bool) -> CapabilityInfo {
+    let requirements = vec![Requirement {
+        what: "pg_stat_replication SELECT".to_string(),
+        met: has_pg_stat_replication,
+    }];
+
+    let (status, reasons) = if !has_pg_stat_replication {
+        (
+            CapabilityStatus::Degraded,
+            vec![ReasonInfo::new(
+                ReasonCode::MissingPrivilege,
+                "Cannot read pg_stat_replication (replica info unavailable)",
+            )],
+        )
+    } else {
+        (CapabilityStatus::Available, vec![])
+    };
+
+    CapabilityInfo {
+        id: "diagnostics.replication",
+        name: "Replication",
+        description: "Streaming replication health monitoring",
+        status,
+        reasons,
+        requirements,
+        limitations: if !has_pg_stat_replication {
+            vec!["Replica lag information not available".to_string()]
+        } else {
+            vec![]
+        },
     }
 }
 

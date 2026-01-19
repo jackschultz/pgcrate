@@ -753,6 +753,7 @@ pgcrate sequences                # Sequence exhaustion check
 pgcrate indexes                  # Missing, unused, duplicate indexes
 pgcrate vacuum                   # Table bloat and vacuum health
 pgcrate bloat                    # Estimate table and index bloat
+pgcrate replication              # Streaming replication health
 
 # Connection context
 pgcrate context --json           # Connection info, server version, privileges
@@ -839,6 +840,7 @@ Currently, `--json` is supported for these commands:
 - `indexes` - Index health analysis
 - `vacuum` - Table bloat analysis
 - `bloat` - Table and index bloat estimation
+- `replication` - Streaming replication health
 - `fix sequence` - Sequence upgrade result
 - `fix index` - Index drop result
 - `fix vacuum` - Vacuum result

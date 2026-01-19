@@ -15,6 +15,7 @@ pub mod indexes;
 pub mod locks;
 mod migrations;
 pub mod model;
+pub mod replication;
 mod role;
 mod schema;
 mod seed;
