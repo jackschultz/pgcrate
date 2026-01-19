@@ -4,6 +4,7 @@
   "title": "pgcrate sequences output",
   "description": "Sequence exhaustion analysis",
   "type": "object",
+  "additionalProperties": false,
   "required": ["ok", "schema_id", "schema_version", "sequences", "overall_status", "warning_threshold", "critical_threshold"],
   "properties": {
     "ok": {
@@ -33,6 +34,7 @@
     },
     "sequenceInfo": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["schema", "name", "data_type", "last_value", "max_value", "pct_used", "status"],
       "properties": {
         "schema": { "type": "string" },

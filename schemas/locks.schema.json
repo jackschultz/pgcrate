@@ -4,6 +4,7 @@
   "title": "pgcrate locks output",
   "description": "Blocking locks and long-running transaction analysis",
   "type": "object",
+  "additionalProperties": false,
   "required": ["ok", "schema_id", "schema_version", "blocking_chains", "long_transactions", "idle_in_transaction"],
   "properties": {
     "ok": {
@@ -34,6 +35,7 @@
   "$defs": {
     "lockProcess": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["pid", "usename", "application_name", "state", "duration_seconds", "query", "blocking_pids", "blocked_count"],
       "properties": {
         "pid": { "type": "integer" },
@@ -54,6 +56,7 @@
     },
     "blockingChain": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["root", "blocked", "total_blocked", "oldest_blocked_seconds"],
       "properties": {
         "root": { "$ref": "#/$defs/lockProcess" },

@@ -4,6 +4,7 @@
   "title": "pgcrate xid output",
   "description": "Transaction ID wraparound analysis",
   "type": "object",
+  "additionalProperties": false,
   "required": ["ok", "schema_id", "schema_version", "databases", "tables", "vacuum_progress", "overall_status"],
   "properties": {
     "ok": {
@@ -39,6 +40,7 @@
     },
     "databaseXid": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["datname", "xid_age", "pct_used", "status"],
       "properties": {
         "datname": { "type": "string" },
@@ -49,6 +51,7 @@
     },
     "tableXid": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["schema", "table", "xid_age", "size", "status"],
       "properties": {
         "schema": { "type": "string" },
@@ -60,6 +63,7 @@
     },
     "vacuumProgress": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["table", "phase", "pct_done"],
       "properties": {
         "table": { "type": "string" },

@@ -4,6 +4,7 @@
   "title": "pgcrate indexes output",
   "description": "Index health analysis: missing, unused, and duplicate indexes",
   "type": "object",
+  "additionalProperties": false,
   "required": ["ok", "schema_id", "schema_version", "missing", "unused", "duplicates", "total_unused_bytes", "total_unused_size", "total_duplicate_bytes", "total_duplicate_size"],
   "properties": {
     "ok": {
@@ -38,6 +39,7 @@
   "$defs": {
     "missingIndexCandidate": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["schema", "table", "seq_scan", "seq_tup_read", "idx_scan", "table_size", "table_size_bytes", "scan_ratio"],
       "properties": {
         "schema": { "type": "string" },
@@ -52,6 +54,7 @@
     },
     "unusedIndex": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["schema", "table", "index", "index_size", "index_size_bytes", "idx_scan", "is_unique", "is_primary"],
       "properties": {
         "schema": { "type": "string" },
@@ -66,6 +69,7 @@
     },
     "duplicateIndexSet": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["schema", "table", "columns", "indexes", "wasted_bytes", "wasted_size"],
       "properties": {
         "schema": { "type": "string" },
@@ -81,6 +85,7 @@
     },
     "duplicateIndexInfo": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["name", "size", "size_bytes", "is_unique", "is_primary", "idx_scan"],
       "properties": {
         "name": { "type": "string" },

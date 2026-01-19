@@ -1190,13 +1190,17 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
             }
 
-            // Handle cancel/kill operations
+            // Handle cancel/kill operations (redact by default)
+            let should_redact = !cli.no_redact;
+            if cli.no_redact {
+                eprintln!("pgcrate: WARNING: --no-redact disables credential redaction. Output may contain sensitive data.");
+            }
             if let Some(pid) = cancel {
-                commands::locks::cancel_query(&client, pid, execute).await?;
+                commands::locks::cancel_query(&client, pid, execute, should_redact).await?;
                 return Ok(());
             }
             if let Some(pid) = kill {
-                commands::locks::terminate_connection(&client, pid, execute).await?;
+                commands::locks::terminate_connection(&client, pid, execute, should_redact).await?;
                 return Ok(());
             }
 
@@ -1224,10 +1228,8 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                     commands::locks::get_idle_in_transaction(&client).await?;
             }
 
-            // Apply redaction unless explicitly disabled
-            if cli.no_redact {
-                eprintln!("pgcrate: WARNING: --no-redact disables credential redaction. Output may contain sensitive data.");
-            } else {
+            // Apply redaction unless explicitly disabled (warning already printed above)
+            if should_redact {
                 result.redact();
             }
 

@@ -41,17 +41,25 @@ pub fn redact_dsn(dsn: &str) -> String {
             url.to_string()
         }
         Err(_) => {
-            // If we can't parse it, redact everything after @ if present
-            if let Some(at_pos) = dsn.find('@') {
+            // If we can't parse it, aggressively redact credentials.
+            // Use rfind('@') to handle @ characters in passwords.
+            if let Some(at_pos) = dsn.rfind('@') {
                 if let Some(scheme_end) = dsn.find("://") {
-                    let before_creds = &dsn[..scheme_end + 3];
-                    let after_at = &dsn[at_pos..];
-                    format!("{}***{}", before_creds, after_at)
+                    let scheme = &dsn[..scheme_end + 3];
+                    // Take everything after @ but strip query params
+                    let after_at = &dsn[at_pos + 1..];
+                    let host_part = after_at.split('?').next().unwrap_or(after_at);
+                    format!("{}***@{}", scheme, host_part)
                 } else {
                     "***REDACTED***".to_string()
                 }
             } else {
-                dsn.to_string()
+                // No @ means no credentials - but still strip query params
+                if let Some(q_pos) = dsn.find('?') {
+                    dsn[..q_pos].to_string()
+                } else {
+                    dsn.to_string()
+                }
             }
         }
     }
@@ -140,6 +148,18 @@ mod tests {
         let redacted = redact_dsn(dsn);
         assert!(!redacted.contains("sslpassword"));
         assert!(!redacted.contains("secret"));
+    }
+
+    #[test]
+    fn test_redact_dsn_with_at_in_password() {
+        // @ in password - the url crate may parse this incorrectly, but we should
+        // at least not leak the password portion.
+        let dsn = "postgres://user:p@ss@localhost:5432/mydb";
+        let redacted = redact_dsn(dsn);
+        // The password (or part of it) should be replaced with ***
+        assert!(redacted.contains("***"), "password not redacted: {}", redacted);
+        // Should not contain the literal password characters "p@ss"
+        assert!(!redacted.contains("p@ss"), "password leaked: {}", redacted);
     }
 
     #[test]

@@ -59,7 +59,8 @@ impl LocksResult {
 }
 
 impl LockProcess {
-    fn redact_query(&mut self) {
+    /// Redact the query text to remove string literals.
+    pub fn redact_query(&mut self) {
         use crate::redact;
         self.query = redact::redact_query(&self.query);
     }
@@ -296,22 +297,25 @@ pub async fn get_pid_info(client: &Client, pid: i32) -> Result<LockProcess> {
 
     Ok(LockProcess {
         pid: row.get("pid"),
-        usename: row.get("usename"),
-        application_name: row.get("application_name"),
+        usename: row.get::<_, Option<String>>("usename").unwrap_or_default(),
+        application_name: row.get::<_, Option<String>>("application_name").unwrap_or_default(),
         client_addr: row.get("client_addr"),
-        state: row.get("state"),
+        state: row.get::<_, Option<String>>("state").unwrap_or_else(|| "unknown".to_string()),
         wait_event_type: row.get("wait_event_type"),
         wait_event: row.get("wait_event"),
-        duration_seconds: row.get("duration_seconds"),
-        query: row.get("query"),
+        duration_seconds: row.get::<_, Option<i64>>("duration_seconds").unwrap_or(0),
+        query: row.get::<_, Option<String>>("query").unwrap_or_default(),
         blocking_pids: vec![],
-        blocked_count: row.get("blocked_count"),
+        blocked_count: row.get::<_, Option<i32>>("blocked_count").unwrap_or(0),
     })
 }
 
 /// Cancel a query (pg_cancel_backend)
-pub async fn cancel_query(client: &Client, pid: i32, execute: bool) -> Result<bool> {
-    let info = get_pid_info(client, pid).await?;
+pub async fn cancel_query(client: &Client, pid: i32, execute: bool, redact: bool) -> Result<bool> {
+    let mut info = get_pid_info(client, pid).await?;
+    if redact {
+        info.redact_query();
+    }
 
     eprintln!("=== CANCEL QUERY ===");
     print_pid_info(&info);
@@ -337,8 +341,11 @@ pub async fn cancel_query(client: &Client, pid: i32, execute: bool) -> Result<bo
 }
 
 /// Terminate a connection (pg_terminate_backend)
-pub async fn terminate_connection(client: &Client, pid: i32, execute: bool) -> Result<bool> {
-    let info = get_pid_info(client, pid).await?;
+pub async fn terminate_connection(client: &Client, pid: i32, execute: bool, redact: bool) -> Result<bool> {
+    let mut info = get_pid_info(client, pid).await?;
+    if redact {
+        info.redact_query();
+    }
 
     eprintln!("=== TERMINATE CONNECTION ===");
     print_pid_info(&info);

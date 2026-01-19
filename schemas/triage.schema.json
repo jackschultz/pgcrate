@@ -4,6 +4,7 @@
   "title": "pgcrate triage output",
   "description": "Quick health check showing critical issues first",
   "type": "object",
+  "additionalProperties": false,
   "required": ["ok", "schema_id", "schema_version", "checks", "overall_status"],
   "properties": {
     "ok": {
@@ -37,6 +38,7 @@
     },
     "checkResult": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["name", "label", "status", "summary"],
       "properties": {
         "name": {
