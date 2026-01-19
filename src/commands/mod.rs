@@ -3,8 +3,10 @@
 //! Each submodule contains related command functions.
 
 mod anonymize;
+pub mod bloat;
 mod bootstrap;
 pub mod capabilities;
+pub mod connections;
 pub mod context;
 mod db;
 mod doctor;
@@ -14,6 +16,8 @@ pub mod indexes;
 pub mod locks;
 mod migrations;
 pub mod model;
+pub mod queries;
+pub mod replication;
 mod role;
 mod schema;
 mod seed;

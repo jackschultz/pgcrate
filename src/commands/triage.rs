@@ -321,7 +321,7 @@ async fn check_xid_age(client: &Client) -> CheckOutcome {
     let query = r#"
         SELECT
             datname,
-            age(datfrozenxid) as xid_age
+            age(datfrozenxid)::bigint as xid_age
         FROM pg_database
         WHERE datallowconn
         ORDER BY age(datfrozenxid) DESC
@@ -331,7 +331,8 @@ async fn check_xid_age(client: &Client) -> CheckOutcome {
     match client.query_one(query, &[]).await {
         Ok(row) => {
             let datname: String = row.get("datname");
-            let xid_age: i32 = row.get("xid_age");
+            // Use i64 to handle XID ages that could exceed i32 max
+            let xid_age: i64 = row.get("xid_age");
 
             // XID wraparound happens at 2^31 (~2.1 billion)
             let max_xid: i64 = 2_147_483_648;
@@ -387,18 +388,17 @@ async fn check_sequences(client: &Client) -> CheckOutcome {
     let label = "SEQUENCES";
 
     // Check sequences that are >70% exhausted
+    // Use same calculation as sequences.rs for consistency (float with rounding)
     let query = r#"
         SELECT
             schemaname || '.' || sequencename as seq_name,
-            last_value,
+            COALESCE(last_value, 0) as last_value,
             CASE
-                WHEN increment_by > 0 THEN
-                    (last_value::numeric / max_value::numeric * 100)::int
-                ELSE
-                    ((min_value::numeric - last_value::numeric) / (min_value::numeric - max_value::numeric) * 100)::int
+                WHEN increment_by > 0 AND max_value > 0 AND last_value IS NOT NULL
+                THEN round(100.0 * last_value / max_value, 1)::double precision
+                ELSE 0::double precision
             END as pct_used
         FROM pg_sequences
-        WHERE last_value IS NOT NULL
         ORDER BY pct_used DESC
         LIMIT 5
     "#;
@@ -408,27 +408,27 @@ async fn check_sequences(client: &Client) -> CheckOutcome {
             let critical: Vec<_> = rows
                 .iter()
                 .filter(|r| {
-                    let pct: i32 = r.get("pct_used");
-                    pct > 85
+                    let pct: f64 = r.get("pct_used");
+                    pct > 85.0
                 })
                 .collect();
 
             let warning: Vec<_> = rows
                 .iter()
                 .filter(|r| {
-                    let pct: i32 = r.get("pct_used");
-                    pct > 70 && pct <= 85
+                    let pct: f64 = r.get("pct_used");
+                    pct > 70.0 && pct <= 85.0
                 })
                 .collect();
 
             if !critical.is_empty() {
                 let seq_name: String = critical[0].get("seq_name");
-                let pct: i32 = critical[0].get("pct_used");
+                let pct: f64 = critical[0].get("pct_used");
                 CheckOutcome::Ok(CheckResult {
                     name,
                     label,
                     status: CheckStatus::Critical,
-                    summary: format!("{} at {}% (+ {} more)", seq_name, pct, critical.len() - 1),
+                    summary: format!("{} at {:.1}% (+ {} more)", seq_name, pct, critical.len() - 1),
                     details: None,
                     next_actions: vec![NextAction::pgcrate(
                         &["sequences"],
@@ -437,12 +437,12 @@ async fn check_sequences(client: &Client) -> CheckOutcome {
                 })
             } else if !warning.is_empty() {
                 let seq_name: String = warning[0].get("seq_name");
-                let pct: i32 = warning[0].get("pct_used");
+                let pct: f64 = warning[0].get("pct_used");
                 CheckOutcome::Ok(CheckResult {
                     name,
                     label,
                     status: CheckStatus::Warning,
-                    summary: format!("{} at {}%", seq_name, pct),
+                    summary: format!("{} at {:.1}%", seq_name, pct),
                     details: None,
                     next_actions: vec![NextAction::pgcrate(
                         &["sequences"],

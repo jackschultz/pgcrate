@@ -81,6 +81,7 @@ pub async fn run_capabilities(client: &Client, read_only: bool) -> Result<Capabi
     let has_pg_cancel = check_function_privilege(client, "pg_cancel_backend(int)").await;
     let has_pg_terminate = check_function_privilege(client, "pg_terminate_backend(int)").await;
     let has_pg_stat_statements = check_extension_and_privilege(client, "pg_stat_statements").await;
+    let has_pg_stat_replication = check_privilege(client, "pg_stat_replication", "SELECT").await;
 
     let capabilities = vec![
         // diagnostics.triage - always available (uses minimal queries)
@@ -106,6 +107,10 @@ pub async fn run_capabilities(client: &Client, read_only: bool) -> Result<Capabi
         check_indexes_capability(has_pg_stat_user_indexes, has_pg_stat_user_tables),
         // diagnostics.xid - needs pg_database
         check_xid_capability(has_pg_database),
+        // diagnostics.bloat - needs pg_stat_user_tables and pg_class
+        check_bloat_capability(has_pg_stat_user_tables),
+        // diagnostics.replication - needs pg_stat_replication
+        check_replication_capability(has_pg_stat_replication),
         // diagnostics.context - always available
         CapabilityInfo {
             id: "diagnostics.context",
@@ -116,8 +121,10 @@ pub async fn run_capabilities(client: &Client, read_only: bool) -> Result<Capabi
             requirements: vec![],
             limitations: vec![],
         },
-        // diagnostics.queries - needs pg_stat_statements (Phase 3, not yet implemented)
+        // diagnostics.queries - needs pg_stat_statements extension
         check_queries_capability(has_pg_stat_statements),
+        // diagnostics.connections - needs pg_stat_activity
+        check_connections_capability(has_pg_stat_activity),
         // fix.sequence - needs write access and pg_sequences
         check_fix_sequence_capability(has_pg_sequences, read_only),
         // fix.cancel - needs pg_cancel_backend
@@ -341,6 +348,68 @@ fn check_indexes_capability(
     }
 }
 
+fn check_replication_capability(has_pg_stat_replication: bool) -> CapabilityInfo {
+    let requirements = vec![Requirement {
+        what: "pg_stat_replication SELECT".to_string(),
+        met: has_pg_stat_replication,
+    }];
+
+    let (status, reasons) = if !has_pg_stat_replication {
+        (
+            CapabilityStatus::Degraded,
+            vec![ReasonInfo::new(
+                ReasonCode::MissingPrivilege,
+                "Cannot read pg_stat_replication (replica info unavailable)",
+            )],
+        )
+    } else {
+        (CapabilityStatus::Available, vec![])
+    };
+
+    CapabilityInfo {
+        id: "diagnostics.replication",
+        name: "Replication",
+        description: "Streaming replication health monitoring",
+        status,
+        reasons,
+        requirements,
+        limitations: if !has_pg_stat_replication {
+            vec!["Replica lag information not available".to_string()]
+        } else {
+            vec![]
+        },
+    }
+}
+
+fn check_bloat_capability(has_pg_stat_user_tables: bool) -> CapabilityInfo {
+    let requirements = vec![Requirement {
+        what: "pg_stat_user_tables SELECT".to_string(),
+        met: has_pg_stat_user_tables,
+    }];
+
+    let (status, reasons) = if !has_pg_stat_user_tables {
+        (
+            CapabilityStatus::Unavailable,
+            vec![ReasonInfo::new(
+                ReasonCode::MissingPrivilege,
+                "Cannot read pg_stat_user_tables",
+            )],
+        )
+    } else {
+        (CapabilityStatus::Available, vec![])
+    };
+
+    CapabilityInfo {
+        id: "diagnostics.bloat",
+        name: "Bloat",
+        description: "Table and index bloat estimation",
+        status,
+        reasons,
+        requirements,
+        limitations: vec![],
+    }
+}
+
 fn check_xid_capability(has_pg_database: bool) -> CapabilityInfo {
     let requirements = vec![Requirement {
         what: "pg_database SELECT".to_string(),
@@ -376,23 +445,17 @@ fn check_queries_capability(has_pg_stat_statements: bool) -> CapabilityInfo {
         met: has_pg_stat_statements,
     }];
 
-    let (status, reasons) = if !has_pg_stat_statements {
+    let (status, reasons, limitations) = if !has_pg_stat_statements {
         (
             CapabilityStatus::Unavailable,
             vec![ReasonInfo::new(
                 ReasonCode::MissingExtension,
                 "pg_stat_statements extension not installed or accessible",
             )],
+            vec!["Install pg_stat_statements extension to enable query analysis".to_string()],
         )
     } else {
-        // Even with the extension, this capability is not yet implemented
-        (
-            CapabilityStatus::Unavailable,
-            vec![ReasonInfo::new(
-                ReasonCode::NotApplicable,
-                "Query analysis not yet implemented (planned for Phase 3)",
-            )],
-        )
+        (CapabilityStatus::Available, vec![], vec![])
     };
 
     CapabilityInfo {
@@ -402,7 +465,36 @@ fn check_queries_capability(has_pg_stat_statements: bool) -> CapabilityInfo {
         status,
         reasons,
         requirements,
-        limitations: vec!["Not yet implemented".to_string()],
+        limitations,
+    }
+}
+
+fn check_connections_capability(has_pg_stat_activity: bool) -> CapabilityInfo {
+    let requirements = vec![Requirement {
+        what: "pg_stat_activity SELECT".to_string(),
+        met: has_pg_stat_activity,
+    }];
+
+    let (status, reasons) = if !has_pg_stat_activity {
+        (
+            CapabilityStatus::Unavailable,
+            vec![ReasonInfo::new(
+                ReasonCode::MissingPrivilege,
+                "Cannot read pg_stat_activity",
+            )],
+        )
+    } else {
+        (CapabilityStatus::Available, vec![])
+    };
+
+    CapabilityInfo {
+        id: "diagnostics.connections",
+        name: "Connections",
+        description: "Connection usage analysis vs max_connections",
+        status,
+        reasons,
+        requirements,
+        limitations: vec![],
     }
 }
 

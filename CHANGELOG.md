@@ -2,6 +2,67 @@
 
 ## Unreleased
 
+**Phase 3a: Query Performance Diagnostics**
+
+Complete the "why is prod slow?" workflow with query and connection analysis.
+
+### New Commands
+
+- **`pgcrate queries`**: Top queries from pg_stat_statements
+  - Sort by total time, mean time, or call count (`--by total|mean|calls`)
+  - Cache hit ratio per query
+  - Status thresholds: warning >1s mean, critical >5s mean
+  - Graceful degradation when pg_stat_statements not installed
+  - Full JSON support with `pgcrate.diagnostics.queries` schema
+
+- **`pgcrate connections`**: Connection usage analysis
+  - Usage vs max_connections with percentage
+  - Breakdown by state (active, idle, idle in transaction)
+  - Group by user, database, or application (`--by-user`, `--by-database`, `--by-application`)
+  - Status thresholds: warning >75%, critical >90%
+  - Full JSON support with `pgcrate.diagnostics.connections` schema
+
+### Capabilities
+
+- `diagnostics.queries` - Available when pg_stat_statements extension is installed
+- `diagnostics.connections` - Always available (uses pg_stat_activity)
+
+---
+
+**Phase 3b: Bloat + Replication Diagnostics**
+
+### New Commands
+
+- **`pgcrate bloat`**: Estimate table and index bloat
+  - Statistical index bloat estimation (ioguix-style, works without extensions)
+  - Table bloat from dead tuple ratios (pg_stat_user_tables)
+  - Recommendations for VACUUM FULL and REINDEX when critical
+  - `--limit` option to control number of results
+  - Full JSON support with `pgcrate.diagnostics.bloat` schema
+
+- **`pgcrate replication`**: Monitor streaming replication health
+  - Server role detection (primary vs standby)
+  - Replica lag monitoring (write, flush, replay lag)
+  - Replication slot status and WAL retention
+  - WAL receiver info (standby only)
+  - Warning: replay_lag >30s or inactive slot retaining >1GB
+  - Critical: replay_lag >5min or wal_status='lost'
+  - Full JSON support with `pgcrate.diagnostics.replication` schema
+
+### Bug Fixes
+
+- Fix UTF-8 string slicing in `bloat` and `sequences` display (prevents panic on non-ASCII names)
+- Fix XID age type overflow in triage (i32 → i64 for databases with high XID age)
+- Fix triage sequences percentage calculation to match `sequences` command (consistent rounding)
+- Add better error context for XID command on empty databases
+
+### UX Improvements
+
+- Add `migration` as alias for `migrate` command (reduces confusion)
+- Add `create` as alias for `migrate new` command
+
+---
+
 **Phase 2a: Fix Commands**
 
 Complete the diagnose→fix→verify loop with safe remediation commands.

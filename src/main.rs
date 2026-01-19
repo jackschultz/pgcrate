@@ -76,6 +76,10 @@ fn json_supported(command: &Commands) -> bool {
         Commands::Sequences { .. } => true,
         Commands::Indexes { .. } => true,
         Commands::Vacuum { .. } => true,
+        Commands::Bloat { .. } => true,
+        Commands::Replication => true,
+        Commands::Queries { .. } => true,
+        Commands::Connections { .. } => true,
         Commands::Fix { .. } => true,
         Commands::Context => true,
         Commands::Capabilities => true,
@@ -175,6 +179,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Migration commands (up, down, status, new, baseline)
+    #[command(visible_alias = "migration")]
     Migrate {
         #[command(subcommand)]
         command: MigrateCommands,
@@ -349,6 +354,35 @@ enum Commands {
         #[arg(long, value_name = "PCT")]
         threshold: Option<f64>,
     },
+    /// Estimate table and index bloat
+    Bloat {
+        /// Number of items to show (default: 10)
+        #[arg(long, default_value = "10")]
+        limit: usize,
+    },
+    /// Monitor streaming replication health
+    Replication,
+    /// Show top queries from pg_stat_statements
+    Queries {
+        /// Sort by: total (default), mean, calls
+        #[arg(long, value_name = "FIELD")]
+        by: Option<String>,
+        /// Number of queries to show (default: 10)
+        #[arg(long, default_value = "10")]
+        limit: usize,
+    },
+    /// Analyze connection usage vs max_connections
+    Connections {
+        /// Group by user
+        #[arg(long)]
+        by_user: bool,
+        /// Group by database
+        #[arg(long)]
+        by_database: bool,
+        /// Group by application
+        #[arg(long)]
+        by_application: bool,
+    },
     /// Fix commands for remediation
     Fix {
         #[command(subcommand)]
@@ -476,6 +510,7 @@ enum MigrateCommands {
     /// Show migration status
     Status,
     /// Create a new migration file
+    #[command(visible_alias = "create")]
     New {
         /// Migration name (e.g., create_users)
         name: String,
@@ -1320,6 +1355,171 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 commands::vacuum::VacuumStatus::Critical => std::process::exit(2),
                 commands::vacuum::VacuumStatus::Warning => std::process::exit(1),
                 commands::vacuum::VacuumStatus::Healthy => {}
+            }
+        }
+        Commands::Bloat { limit } => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
+
+            let timeout_config = parse_timeout_config(&cli)?;
+            let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
+            setup_ctrlc_handler(session.cancel_token());
+
+            if !cli.quiet && !cli.json {
+                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
+            }
+
+            let result = commands::bloat::get_bloat(session.client(), limit).await?;
+
+            if cli.json {
+                commands::bloat::print_json(&result, Some(session.effective_timeouts()))?;
+            } else {
+                commands::bloat::print_human(&result, cli.quiet);
+            }
+
+            // Exit with appropriate code
+            match result.overall_status {
+                commands::bloat::BloatStatus::Critical => std::process::exit(2),
+                commands::bloat::BloatStatus::Warning => std::process::exit(1),
+                commands::bloat::BloatStatus::Healthy => {}
+            }
+        }
+        Commands::Replication => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
+
+            let timeout_config = parse_timeout_config(&cli)?;
+            let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
+            setup_ctrlc_handler(session.cancel_token());
+
+            if !cli.quiet && !cli.json {
+                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
+            }
+
+            let result = commands::replication::get_replication(session.client()).await?;
+
+            if cli.json {
+                commands::replication::print_json(&result, Some(session.effective_timeouts()))?;
+            } else {
+                commands::replication::print_human(&result, cli.quiet);
+            }
+
+            // Exit with appropriate code
+            match result.overall_status {
+                commands::replication::ReplicationStatus::Critical => std::process::exit(2),
+                commands::replication::ReplicationStatus::Warning => std::process::exit(1),
+                commands::replication::ReplicationStatus::Healthy => {}
+            }
+        }
+        Commands::Queries { ref by, limit } => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
+
+            let timeout_config = parse_timeout_config(&cli)?;
+            let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
+            setup_ctrlc_handler(session.cancel_token());
+
+            if !cli.quiet && !cli.json {
+                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
+            }
+
+            // Parse sort order
+            let sort_by = by
+                .as_ref()
+                .map(|s| {
+                    commands::queries::QuerySortBy::from_str(s).ok_or_else(|| {
+                        anyhow::anyhow!("Invalid --by value '{}'. Use: total, mean, calls", s)
+                    })
+                })
+                .transpose()?
+                .unwrap_or_default();
+
+            let result = commands::queries::run_queries(session.client(), sort_by, limit).await?;
+
+            if cli.json {
+                commands::queries::print_json(&result, Some(session.effective_timeouts()))?;
+            } else {
+                commands::queries::print_human(&result, cli.quiet);
+            }
+
+            // Exit with appropriate code
+            match result.overall_status {
+                commands::queries::QueryStatus::Critical => std::process::exit(2),
+                commands::queries::QueryStatus::Warning => std::process::exit(1),
+                commands::queries::QueryStatus::Healthy => {}
+            }
+        }
+        Commands::Connections {
+            by_user,
+            by_database,
+            by_application,
+        } => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
+
+            let timeout_config = parse_timeout_config(&cli)?;
+            let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
+            setup_ctrlc_handler(session.cancel_token());
+
+            if !cli.quiet && !cli.json {
+                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
+            }
+
+            let result = commands::connections::run_connections(
+                session.client(),
+                by_user,
+                by_database,
+                by_application,
+            )
+            .await?;
+
+            if cli.json {
+                commands::connections::print_json(&result, Some(session.effective_timeouts()))?;
+            } else {
+                commands::connections::print_human(&result, cli.quiet);
+            }
+
+            // Exit with appropriate code
+            match result.overall_status {
+                commands::connections::ConnectionStatus::Critical => std::process::exit(2),
+                commands::connections::ConnectionStatus::Warning => std::process::exit(1),
+                commands::connections::ConnectionStatus::Healthy => {}
             }
         }
         Commands::Fix { ref command } => {
@@ -2183,6 +2383,10 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 | Commands::Sequences { .. }
                 | Commands::Indexes { .. }
                 | Commands::Vacuum { .. }
+                | Commands::Bloat { .. }
+                | Commands::Replication
+                | Commands::Queries { .. }
+                | Commands::Connections { .. }
                 | Commands::Fix { .. }
                 | Commands::Context
                 | Commands::Capabilities

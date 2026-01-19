@@ -4,7 +4,7 @@
 //! If XID age gets too high, the database will shut down to prevent data corruption.
 //! This command helps monitor XID age at database and table levels.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::Serialize;
 use tokio_postgres::Client;
 
@@ -79,25 +79,31 @@ pub struct XidResult {
 
 /// Get database-level XID ages
 pub async fn get_database_xid(client: &Client) -> Result<Vec<DatabaseXid>> {
+    // Use explicit double precision cast to avoid deserialization issues
     let query = r#"
         SELECT
             datname,
             age(datfrozenxid)::bigint as xid_age,
-            round(100.0 * age(datfrozenxid) / 2147483647, 2)::float8 as pct_used
+            (100.0 * age(datfrozenxid)::double precision / 2147483647.0)::double precision as pct_used
         FROM pg_database
         WHERE datallowconn
         ORDER BY age(datfrozenxid) DESC
     "#;
 
-    let rows = client.query(query, &[]).await?;
+    let rows = client
+        .query(query, &[])
+        .await
+        .context("Failed to query database XID ages")?;
+
     let mut results = Vec::new();
 
     for row in rows {
         let xid_age: i64 = row.get("xid_age");
+        let pct_used: f64 = row.get("pct_used");
         results.push(DatabaseXid {
             datname: row.get("datname"),
             xid_age,
-            pct_used: row.get("pct_used"),
+            pct_used,
             status: XidStatus::from_age(xid_age),
         });
     }
@@ -107,6 +113,7 @@ pub async fn get_database_xid(client: &Client) -> Result<Vec<DatabaseXid>> {
 
 /// Get table-level XID ages (oldest unfrozen tables)
 pub async fn get_table_xid(client: &Client, limit: usize) -> Result<Vec<TableXid>> {
+    // Query user tables with XID age. Returns empty vec for databases with no tables.
     let query = r#"
         SELECT
             s.schemaname,
@@ -120,7 +127,11 @@ pub async fn get_table_xid(client: &Client, limit: usize) -> Result<Vec<TableXid
         LIMIT $1
     "#;
 
-    let rows = client.query(query, &[&(limit as i64)]).await?;
+    let rows = client
+        .query(query, &[&(limit as i64)])
+        .await
+        .context("Failed to query table XID ages (database may have no user tables)")?;
+
     let mut results = Vec::new();
 
     for row in rows {

@@ -425,8 +425,12 @@ pub mod schema {
     pub const SEQUENCES: &str = "pgcrate.diagnostics.sequences";
     pub const INDEXES: &str = "pgcrate.diagnostics.indexes";
     pub const VACUUM: &str = "pgcrate.diagnostics.vacuum";
+    pub const BLOAT: &str = "pgcrate.diagnostics.bloat";
+    pub const REPLICATION: &str = "pgcrate.diagnostics.replication";
     pub const CONTEXT: &str = "pgcrate.diagnostics.context";
     pub const CAPABILITIES: &str = "pgcrate.diagnostics.capabilities";
+    pub const QUERIES: &str = "pgcrate.diagnostics.queries";
+    pub const CONNECTIONS: &str = "pgcrate.diagnostics.connections";
 }
 
 // =============================================================================
