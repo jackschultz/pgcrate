@@ -76,6 +76,7 @@ fn json_supported(command: &Commands) -> bool {
         Commands::Sequences { .. } => true,
         Commands::Indexes { .. } => true,
         Commands::Vacuum { .. } => true,
+        Commands::Bloat { .. } => true,
         Commands::Fix { .. } => true,
         Commands::Context => true,
         Commands::Capabilities => true,
@@ -348,6 +349,12 @@ enum Commands {
         /// Warning threshold percentage (default: 10)
         #[arg(long, value_name = "PCT")]
         threshold: Option<f64>,
+    },
+    /// Estimate table and index bloat
+    Bloat {
+        /// Number of items to show (default: 10)
+        #[arg(long, default_value = "10")]
+        limit: usize,
     },
     /// Fix commands for remediation
     Fix {
@@ -1322,6 +1329,42 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 commands::vacuum::VacuumStatus::Healthy => {}
             }
         }
+        Commands::Bloat { limit } => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
+
+            let timeout_config = parse_timeout_config(&cli)?;
+            let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
+            setup_ctrlc_handler(session.cancel_token());
+
+            if !cli.quiet && !cli.json {
+                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
+            }
+
+            let result = commands::bloat::get_bloat(session.client(), limit).await?;
+
+            if cli.json {
+                commands::bloat::print_json(&result, Some(session.effective_timeouts()))?;
+            } else {
+                commands::bloat::print_human(&result, cli.quiet);
+            }
+
+            // Exit with appropriate code
+            match result.overall_status {
+                commands::bloat::BloatStatus::Critical => std::process::exit(2),
+                commands::bloat::BloatStatus::Warning => std::process::exit(1),
+                commands::bloat::BloatStatus::Healthy => {}
+            }
+        }
         Commands::Fix { ref command } => {
             let config =
                 Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
@@ -2183,6 +2226,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 | Commands::Sequences { .. }
                 | Commands::Indexes { .. }
                 | Commands::Vacuum { .. }
+                | Commands::Bloat { .. }
                 | Commands::Fix { .. }
                 | Commands::Context
                 | Commands::Capabilities

@@ -106,6 +106,8 @@ pub async fn run_capabilities(client: &Client, read_only: bool) -> Result<Capabi
         check_indexes_capability(has_pg_stat_user_indexes, has_pg_stat_user_tables),
         // diagnostics.xid - needs pg_database
         check_xid_capability(has_pg_database),
+        // diagnostics.bloat - needs pg_stat_user_tables and pg_class
+        check_bloat_capability(has_pg_stat_user_tables),
         // diagnostics.context - always available
         CapabilityInfo {
             id: "diagnostics.context",
@@ -338,6 +340,35 @@ fn check_indexes_capability(
         reasons,
         requirements,
         limitations,
+    }
+}
+
+fn check_bloat_capability(has_pg_stat_user_tables: bool) -> CapabilityInfo {
+    let requirements = vec![Requirement {
+        what: "pg_stat_user_tables SELECT".to_string(),
+        met: has_pg_stat_user_tables,
+    }];
+
+    let (status, reasons) = if !has_pg_stat_user_tables {
+        (
+            CapabilityStatus::Unavailable,
+            vec![ReasonInfo::new(
+                ReasonCode::MissingPrivilege,
+                "Cannot read pg_stat_user_tables",
+            )],
+        )
+    } else {
+        (CapabilityStatus::Available, vec![])
+    };
+
+    CapabilityInfo {
+        id: "diagnostics.bloat",
+        name: "Bloat",
+        description: "Table and index bloat estimation",
+        status,
+        reasons,
+        requirements,
+        limitations: vec![],
     }
 }
 

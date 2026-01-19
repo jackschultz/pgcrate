@@ -143,6 +143,7 @@ pgcrate xid                           # Transaction ID wraparound analysis
 pgcrate sequences                     # Sequence exhaustion check
 pgcrate indexes                       # Missing, unused, duplicate indexes
 pgcrate vacuum                        # Table bloat and vacuum health
+pgcrate bloat                         # Estimate table and index bloat
 ```
 
 All diagnostic commands support timeout flags for production safety:
@@ -309,6 +310,7 @@ DROP TABLE users;
 | `pgcrate sequences` | Sequence exhaustion check |
 | `pgcrate indexes` | Missing, unused, duplicate indexes |
 | `pgcrate vacuum` | Table bloat and vacuum health |
+| `pgcrate bloat` | Estimate table and index bloat |
 | `pgcrate fix sequence` | Upgrade sequence type to prevent exhaustion |
 | `pgcrate fix index` | Drop unused/duplicate indexes |
 | `pgcrate fix vacuum` | Run VACUUM on tables |

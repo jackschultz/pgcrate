@@ -3,6 +3,7 @@
 //! Each submodule contains related command functions.
 
 mod anonymize;
+pub mod bloat;
 mod bootstrap;
 pub mod capabilities;
 pub mod context;

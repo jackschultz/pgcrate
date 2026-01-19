@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+**Phase 3b: Bloat Diagnostics**
+
+### New Commands
+
+- **`pgcrate bloat`**: Estimate table and index bloat
+  - Statistical index bloat estimation (ioguix-style, works without extensions)
+  - Table bloat from dead tuple ratios (pg_stat_user_tables)
+  - Recommendations for VACUUM FULL and REINDEX when critical
+  - `--limit` option to control number of results
+  - Full JSON support with `pgcrate.diagnostics.bloat` schema
+
+---
+
 **Phase 2a: Fix Commands**
 
 Complete the diagnose→fix→verify loop with safe remediation commands.
