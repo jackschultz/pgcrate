@@ -2,10 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "pgcrate.diagnostics.triage",
   "title": "pgcrate triage output",
-  "description": "Quick health check showing critical issues first",
+  "description": "Quick health check showing critical issues first, with graceful degradation",
   "type": "object",
   "additionalProperties": false,
-  "required": ["ok", "schema_id", "schema_version", "checks", "overall_status"],
+  "required": ["ok", "schema_id", "schema_version", "checks", "skipped_checks", "overall_status"],
   "properties": {
     "ok": {
       "type": "boolean",
@@ -28,7 +28,12 @@
     "checks": {
       "type": "array",
       "items": { "$ref": "#/$defs/checkResult" },
-      "description": "Individual health checks"
+      "description": "Individual health checks, sorted by severity (critical first)"
+    },
+    "skipped_checks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/skippedCheck" },
+      "description": "Checks that could not run due to permissions, timeouts, etc."
     }
   },
   "$defs": {
@@ -36,10 +41,23 @@
       "type": "string",
       "enum": ["healthy", "warning", "critical", "error"]
     },
+    "skipReason": {
+      "type": "string",
+      "enum": [
+        "insufficient_privilege",
+        "missing_extension",
+        "unsupported_postgres_version",
+        "statement_timeout",
+        "lock_timeout",
+        "not_applicable",
+        "internal_error"
+      ],
+      "description": "Why a check was skipped (stable enum for automation)"
+    },
     "checkResult": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "label", "status", "summary"],
+      "required": ["name", "label", "status", "summary", "next_actions"],
       "properties": {
         "name": {
           "type": "string",
@@ -58,9 +76,46 @@
           "type": ["string", "null"],
           "description": "Optional detailed information"
         },
-        "action": {
-          "type": ["string", "null"],
-          "description": "Suggested drill-down command"
+        "next_actions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/nextAction" },
+          "description": "Suggested next actions (structured, runnable)"
+        }
+      }
+    },
+    "skippedCheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["check_id", "reason", "reason_human"],
+      "properties": {
+        "check_id": {
+          "type": "string",
+          "description": "Identifier of the skipped check"
+        },
+        "reason": { "$ref": "#/$defs/skipReason" },
+        "reason_human": {
+          "type": "string",
+          "description": "Human-readable explanation of why the check was skipped"
+        }
+      }
+    },
+    "nextAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command", "args", "rationale"],
+      "properties": {
+        "command": {
+          "type": "string",
+          "description": "Command to run (e.g., 'pgcrate')"
+        },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Command arguments"
+        },
+        "rationale": {
+          "type": "string",
+          "description": "Why this action helps"
         }
       }
     }
