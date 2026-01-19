@@ -1151,7 +1151,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
             let results = commands::triage::run_triage(session.client()).await;
 
             if cli.json {
-                commands::triage::print_json(&results)?;
+                commands::triage::print_json(&results, Some(session.effective_timeouts()))?;
             } else {
                 commands::triage::print_human(&results, cli.quiet);
             }
@@ -1242,7 +1242,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
             }
 
             if cli.json {
-                commands::locks::print_json(&result)?;
+                commands::locks::print_json(&result, Some(session.effective_timeouts()))?;
             } else {
                 if show_blocking {
                     commands::locks::print_blocking_chains(&result.blocking_chains, cli.quiet);
@@ -1294,7 +1294,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
             let result = commands::xid::run_xid(session.client(), tables).await?;
 
             if cli.json {
-                commands::xid::print_json(&result)?;
+                commands::xid::print_json(&result, Some(session.effective_timeouts()))?;
             } else {
                 commands::xid::print_human(&result, cli.quiet);
             }
@@ -1335,7 +1335,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 commands::sequences::run_sequences(session.client(), warn, crit).await?;
 
             if cli.json {
-                commands::sequences::print_json(&result)?;
+                commands::sequences::print_json(&result, Some(session.effective_timeouts()))?;
             } else {
                 commands::sequences::print_human(&result, cli.quiet, all);
             }
@@ -1380,7 +1380,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                     .await?;
 
             if cli.json {
-                commands::indexes::print_json(&result)?;
+                commands::indexes::print_json(&result, Some(session.effective_timeouts()))?;
             } else {
                 commands::indexes::print_human(&result, cli.verbose);
             }

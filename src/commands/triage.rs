@@ -47,8 +47,8 @@ impl SkipReason {
 pub struct SkippedCheck {
     /// Check identifier (e.g., "blocking_locks")
     pub check_id: &'static str,
-    /// Why the check was skipped
-    pub reason: SkipReason,
+    /// Why the check was skipped (stable enum for automation)
+    pub reason_code: SkipReason,
     /// Human-readable explanation
     pub reason_human: String,
 }
@@ -294,10 +294,10 @@ async fn check_blocking_locks(client: &Client) -> CheckOutcome {
             }
         }
         Err(e) => {
-            let (reason, reason_human) = classify_error(&e);
+            let (reason_code, reason_human) = classify_error(&e);
             CheckOutcome::Skip(SkippedCheck {
                 check_id: name,
-                reason,
+                reason_code,
                 reason_human,
             })
         }
@@ -357,10 +357,10 @@ async fn check_long_transactions(client: &Client) -> CheckOutcome {
             }
         }
         Err(e) => {
-            let (reason, reason_human) = classify_error(&e);
+            let (reason_code, reason_human) = classify_error(&e);
             CheckOutcome::Skip(SkippedCheck {
                 check_id: name,
-                reason,
+                reason_code,
                 reason_human,
             })
         }
@@ -425,10 +425,10 @@ async fn check_xid_age(client: &Client) -> CheckOutcome {
             })
         }
         Err(e) => {
-            let (reason, reason_human) = classify_error(&e);
+            let (reason_code, reason_human) = classify_error(&e);
             CheckOutcome::Skip(SkippedCheck {
                 check_id: name,
-                reason,
+                reason_code,
                 reason_human,
             })
         }
@@ -515,10 +515,10 @@ async fn check_sequences(client: &Client) -> CheckOutcome {
             }
         }
         Err(e) => {
-            let (reason, reason_human) = classify_error(&e);
+            let (reason_code, reason_human) = classify_error(&e);
             CheckOutcome::Skip(SkippedCheck {
                 check_id: name,
-                reason,
+                reason_code,
                 reason_human,
             })
         }
@@ -569,10 +569,10 @@ async fn check_connections(client: &Client) -> CheckOutcome {
             })
         }
         Err(e) => {
-            let (reason, reason_human) = classify_error(&e);
+            let (reason_code, reason_human) = classify_error(&e);
             CheckOutcome::Skip(SkippedCheck {
                 check_id: name,
-                reason,
+                reason_code,
                 reason_human,
             })
         }
@@ -650,20 +650,20 @@ async fn check_replication_lag(client: &Client) -> CheckOutcome {
                     })
                 }
                 Err(e) => {
-                    let (reason, reason_human) = classify_error(&e);
+                    let (reason_code, reason_human) = classify_error(&e);
                     CheckOutcome::Skip(SkippedCheck {
                         check_id: name,
-                        reason,
+                        reason_code,
                         reason_human,
                     })
                 }
             }
         }
         Err(e) => {
-            let (reason, reason_human) = classify_error(&e);
+            let (reason_code, reason_human) = classify_error(&e);
             CheckOutcome::Skip(SkippedCheck {
                 check_id: name,
-                reason,
+                reason_code,
                 reason_human,
             })
         }
@@ -726,10 +726,10 @@ async fn check_stats_age(client: &Client) -> CheckOutcome {
             }
         }
         Err(e) => {
-            let (reason, reason_human) = classify_error(&e);
+            let (reason_code, reason_human) = classify_error(&e);
             CheckOutcome::Skip(SkippedCheck {
                 check_id: name,
-                reason,
+                reason_code,
                 reason_human,
             })
         }
@@ -754,7 +754,7 @@ pub fn print_human(results: &TriageResults, quiet: bool) {
             }
         }
         for skip in &results.skipped_checks {
-            println!("- {}: skipped ({})", skip.check_id, skip.reason.description());
+            println!("- {}: skipped ({})", skip.check_id, skip.reason_code.description());
         }
         return;
     }
@@ -789,7 +789,7 @@ pub fn print_human(results: &TriageResults, quiet: bool) {
         println!();
         println!("SKIPPED:");
         for skip in &results.skipped_checks {
-            println!("  {} - {}", skip.check_id, skip.reason.description());
+            println!("  {} - {}", skip.check_id, skip.reason_code.description());
         }
     }
 
@@ -812,9 +812,15 @@ pub fn print_human(results: &TriageResults, quiet: bool) {
 }
 
 /// Print triage results as JSON with schema versioning.
-pub fn print_json(results: &TriageResults) -> Result<()> {
+pub fn print_json(
+    results: &TriageResults,
+    timeouts: Option<crate::diagnostic::EffectiveTimeouts>,
+) -> Result<()> {
     use crate::output::{schema, DiagnosticOutput};
-    let output = DiagnosticOutput::new(schema::TRIAGE, results);
+    let output = match timeouts {
+        Some(t) => DiagnosticOutput::with_timeouts(schema::TRIAGE, results, t),
+        None => DiagnosticOutput::new(schema::TRIAGE, results),
+    };
     output.print()?;
     Ok(())
 }
@@ -899,7 +905,7 @@ mod tests {
             vec![check("test1", "TEST1", CheckStatus::Healthy)],
             vec![SkippedCheck {
                 check_id: "replication",
-                reason: SkipReason::InsufficientPrivilege,
+                reason_code: SkipReason::InsufficientPrivilege,
                 reason_human: "permission denied".to_string(),
             }],
         );

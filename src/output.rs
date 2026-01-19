@@ -240,8 +240,19 @@ pub struct DiagnosticOutput<T: Serialize> {
     pub ok: bool,
     pub schema_id: &'static str,
     pub schema_version: &'static str,
+    /// Effective timeout configuration used for this diagnostic
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeouts: Option<TimeoutsJson>,
     #[serde(flatten)]
     pub data: T,
+}
+
+/// Timeout configuration in JSON output (milliseconds).
+#[derive(Debug, Clone, Serialize)]
+pub struct TimeoutsJson {
+    pub connect_ms: u64,
+    pub statement_ms: u64,
+    pub lock_ms: u64,
 }
 
 impl<T: Serialize> DiagnosticOutput<T> {
@@ -251,6 +262,26 @@ impl<T: Serialize> DiagnosticOutput<T> {
             ok: true,
             schema_id,
             schema_version: DIAGNOSTIC_SCHEMA_VERSION,
+            timeouts: None,
+            data,
+        }
+    }
+
+    /// Create a new diagnostic output with timeouts included.
+    pub fn with_timeouts(
+        schema_id: &'static str,
+        data: T,
+        timeouts: crate::diagnostic::EffectiveTimeouts,
+    ) -> Self {
+        Self {
+            ok: true,
+            schema_id,
+            schema_version: DIAGNOSTIC_SCHEMA_VERSION,
+            timeouts: Some(TimeoutsJson {
+                connect_ms: timeouts.connect_timeout_ms,
+                statement_ms: timeouts.statement_timeout_ms,
+                lock_ms: timeouts.lock_timeout_ms,
+            }),
             data,
         }
     }
@@ -270,6 +301,99 @@ pub mod schema {
     pub const XID: &str = "pgcrate.diagnostics.xid";
     pub const SEQUENCES: &str = "pgcrate.diagnostics.sequences";
     pub const INDEXES: &str = "pgcrate.diagnostics.indexes";
+}
+
+/// Diagnostic-specific error response.
+/// Distinguishes "tool failed" from "critical finding" by including schema metadata.
+#[derive(Debug, Serialize)]
+pub struct DiagnosticError {
+    pub ok: bool,
+    /// Which diagnostic command failed
+    pub schema_id: &'static str,
+    pub schema_version: &'static str,
+    /// Stable error code for automation
+    pub error_code: DiagnosticErrorCode,
+    /// Human-readable error message
+    pub message: String,
+    /// Optional additional details (error chain, hints)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<String>,
+}
+
+/// Error codes for diagnostic failures (stable enum for automation).
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagnosticErrorCode {
+    /// Could not connect to database
+    ConnectionFailed,
+    /// Query timed out (statement_timeout)
+    StatementTimeout,
+    /// Could not acquire lock (lock_timeout)
+    LockTimeout,
+    /// Insufficient privileges to run diagnostic
+    PermissionDenied,
+    /// Internal error in pgcrate
+    InternalError,
+}
+
+impl DiagnosticError {
+    pub fn new(
+        schema_id: &'static str,
+        error_code: DiagnosticErrorCode,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            ok: false,
+            schema_id,
+            schema_version: DIAGNOSTIC_SCHEMA_VERSION,
+            error_code,
+            message: message.into(),
+            details: None,
+        }
+    }
+
+    pub fn with_details(
+        schema_id: &'static str,
+        error_code: DiagnosticErrorCode,
+        message: impl Into<String>,
+        details: impl Into<String>,
+    ) -> Self {
+        Self {
+            ok: false,
+            schema_id,
+            schema_version: DIAGNOSTIC_SCHEMA_VERSION,
+            error_code,
+            message: message.into(),
+            details: Some(details.into()),
+        }
+    }
+
+    /// Classify an anyhow error into a diagnostic error code.
+    pub fn classify_error(err: &anyhow::Error) -> DiagnosticErrorCode {
+        let msg = err.to_string().to_lowercase();
+
+        if msg.contains("connection refused")
+            || msg.contains("could not connect")
+            || msg.contains("connection timed out")
+        {
+            DiagnosticErrorCode::ConnectionFailed
+        } else if msg.contains("statement timeout") || msg.contains("canceling statement") {
+            DiagnosticErrorCode::StatementTimeout
+        } else if msg.contains("lock timeout") || msg.contains("could not obtain lock") {
+            DiagnosticErrorCode::LockTimeout
+        } else if msg.contains("permission denied") || msg.contains("must be superuser") {
+            DiagnosticErrorCode::PermissionDenied
+        } else {
+            DiagnosticErrorCode::InternalError
+        }
+    }
+
+    /// Print this error as JSON to stdout.
+    pub fn print(&self) {
+        let json = serde_json::to_string_pretty(self)
+            .expect("DiagnosticError serialization should never fail");
+        println!("{}", json);
+    }
 }
 
 // =============================================================================

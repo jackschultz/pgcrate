@@ -279,9 +279,15 @@ pub fn print_human(result: &XidResult, _quiet: bool) {
 }
 
 /// Print XID results as JSON with schema versioning.
-pub fn print_json(result: &XidResult) -> Result<()> {
+pub fn print_json(
+    result: &XidResult,
+    timeouts: Option<crate::diagnostic::EffectiveTimeouts>,
+) -> Result<()> {
     use crate::output::{schema, DiagnosticOutput};
-    let output = DiagnosticOutput::new(schema::XID, result);
+    let output = match timeouts {
+        Some(t) => DiagnosticOutput::with_timeouts(schema::XID, result, t),
+        None => DiagnosticOutput::new(schema::XID, result),
+    };
     output.print()?;
     Ok(())
 }

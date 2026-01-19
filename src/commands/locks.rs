@@ -541,9 +541,15 @@ pub fn print_idle_in_transaction(procs: &[LockProcess], quiet: bool) {
 }
 
 /// Print results as JSON with schema versioning.
-pub fn print_json(result: &LocksResult) -> Result<()> {
+pub fn print_json(
+    result: &LocksResult,
+    timeouts: Option<crate::diagnostic::EffectiveTimeouts>,
+) -> Result<()> {
     use crate::output::{schema, DiagnosticOutput};
-    let output = DiagnosticOutput::new(schema::LOCKS, result);
+    let output = match timeouts {
+        Some(t) => DiagnosticOutput::with_timeouts(schema::LOCKS, result, t),
+        None => DiagnosticOutput::new(schema::LOCKS, result),
+    };
     output.print()?;
     Ok(())
 }

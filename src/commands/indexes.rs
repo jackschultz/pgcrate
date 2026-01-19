@@ -550,9 +550,15 @@ pub fn print_human(result: &IndexesResult, verbose: bool) {
 }
 
 /// Print index analysis as JSON with schema versioning.
-pub fn print_json(result: &IndexesResult) -> Result<()> {
+pub fn print_json(
+    result: &IndexesResult,
+    timeouts: Option<crate::diagnostic::EffectiveTimeouts>,
+) -> Result<()> {
     use crate::output::{schema, DiagnosticOutput};
-    let output = DiagnosticOutput::new(schema::INDEXES, result);
+    let output = match timeouts {
+        Some(t) => DiagnosticOutput::with_timeouts(schema::INDEXES, result, t),
+        None => DiagnosticOutput::new(schema::INDEXES, result),
+    };
     output.print()?;
     Ok(())
 }

@@ -86,13 +86,13 @@
     "skippedCheck": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["check_id", "reason", "reason_human"],
+      "required": ["check_id", "reason_code", "reason_human"],
       "properties": {
         "check_id": {
           "type": "string",
           "description": "Identifier of the skipped check"
         },
-        "reason": { "$ref": "#/$defs/skipReason" },
+        "reason_code": { "$ref": "#/$defs/skipReason" },
         "reason_human": {
           "type": "string",
           "description": "Human-readable explanation of why the check was skipped"
