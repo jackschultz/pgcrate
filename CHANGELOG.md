@@ -22,6 +22,18 @@
   - Critical: replay_lag >5min or wal_status='lost'
   - Full JSON support with `pgcrate.diagnostics.replication` schema
 
+### Bug Fixes
+
+- Fix UTF-8 string slicing in `bloat` and `sequences` display (prevents panic on non-ASCII names)
+- Fix XID age type overflow in triage (i32 → i64 for databases with high XID age)
+- Fix triage sequences percentage calculation to match `sequences` command (consistent rounding)
+- Add better error context for XID command on empty databases
+
+### UX Improvements
+
+- Add `migration` as alias for `migrate` command (reduces confusion)
+- Add `create` as alias for `migrate new` command
+
 ---
 
 **Phase 2a: Fix Commands**
