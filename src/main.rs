@@ -70,11 +70,13 @@ fn json_supported(command: &Commands) -> bool {
         Commands::Describe { .. } => true,
         Commands::Diff { .. } => true,
         Commands::Doctor { .. } => true,
-        Commands::Triage => true,
+        Commands::Triage { .. } => true,
         Commands::Locks { .. } => true,
         Commands::Xid { .. } => true,
         Commands::Sequences { .. } => true,
         Commands::Indexes { .. } => true,
+        Commands::Vacuum { .. } => true,
+        Commands::Fix { .. } => true,
         Commands::Context => true,
         Commands::Capabilities => true,
         Commands::Sql { .. } => true,
@@ -285,7 +287,11 @@ enum Commands {
         strict: bool,
     },
     /// Quick database health triage (locks, transactions, XID, sequences, connections)
-    Triage,
+    Triage {
+        /// Include structured fix actions in output
+        #[arg(long)]
+        include_fixes: bool,
+    },
     /// Inspect blocking locks and long transactions
     Locks {
         /// Show only blocking chains
@@ -333,6 +339,20 @@ enum Commands {
         /// Number of unused indexes to show (default: 20)
         #[arg(long, default_value = "20")]
         unused_limit: usize,
+    },
+    /// Monitor table bloat and vacuum health
+    Vacuum {
+        /// Filter to specific table (schema.table)
+        #[arg(long, value_name = "TABLE")]
+        table: Option<String>,
+        /// Warning threshold percentage (default: 10)
+        #[arg(long, value_name = "PCT")]
+        threshold: Option<f64>,
+    },
+    /// Fix commands for remediation
+    Fix {
+        #[command(subcommand)]
+        command: FixCommands,
     },
     /// Show connection context, server info, extensions, and privileges
     Context,
@@ -743,6 +763,65 @@ enum SeedCommands {
     },
 }
 
+#[derive(Subcommand)]
+enum FixCommands {
+    /// Upgrade sequence type to prevent exhaustion
+    Sequence {
+        /// Sequence to upgrade (schema.sequence)
+        sequence: String,
+        /// Target type to upgrade to (integer, bigint)
+        #[arg(long, value_name = "TYPE")]
+        upgrade_to: String,
+        /// Show what would be done without executing
+        #[arg(long)]
+        dry_run: bool,
+        /// Confirm execution (required for fixes)
+        #[arg(long)]
+        yes: bool,
+        /// Run verification after fix
+        #[arg(long)]
+        verify: bool,
+    },
+    /// Drop unused or duplicate index
+    Index {
+        /// Index to drop (schema.index)
+        #[arg(long, value_name = "INDEX")]
+        drop: String,
+        /// Show what would be done without executing
+        #[arg(long)]
+        dry_run: bool,
+        /// Confirm execution (required for fixes)
+        #[arg(long)]
+        yes: bool,
+        /// Run verification after fix
+        #[arg(long)]
+        verify: bool,
+    },
+    /// Run vacuum on a table
+    Vacuum {
+        /// Table to vacuum (schema.table)
+        table: String,
+        /// Include FREEZE option
+        #[arg(long)]
+        freeze: bool,
+        /// Include FULL option (requires ACCESS EXCLUSIVE lock)
+        #[arg(long)]
+        full: bool,
+        /// Include ANALYZE option
+        #[arg(long)]
+        analyze: bool,
+        /// Show what would be done without executing
+        #[arg(long)]
+        dry_run: bool,
+        /// Confirm execution (required for VACUUM FULL)
+        #[arg(long)]
+        yes: bool,
+        /// Run verification after fix
+        #[arg(long)]
+        verify: bool,
+    },
+}
+
 #[tokio::main]
 async fn main() {
     // Load .env file if present (before parsing CLI so env vars are available)
@@ -1130,7 +1209,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 std::process::exit(exit_code);
             }
         }
-        Commands::Triage => {
+        Commands::Triage { ref include_fixes } => {
             let config =
                 Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
             let conn_result = connection::resolve_and_validate(
@@ -1155,7 +1234,22 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
             }
 
-            let results = commands::triage::run_triage(session.client()).await;
+            let mut results = commands::triage::run_triage(session.client()).await;
+
+            // Generate fix actions when --include-fixes is specified
+            if *include_fixes {
+                let actions = commands::triage::generate_fix_actions(
+                    session.client(),
+                    &results,
+                    cli.read_write,
+                    cli.allow_primary,
+                )
+                .await;
+
+                if !actions.is_empty() {
+                    results.actions = Some(actions);
+                }
+            }
 
             if cli.json {
                 commands::triage::print_json(&results, Some(session.effective_timeouts()))?;
@@ -1166,6 +1260,272 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
             let exit_code = results.exit_code();
             if exit_code != 0 {
                 std::process::exit(exit_code);
+            }
+        }
+        Commands::Vacuum {
+            ref table,
+            threshold,
+        } => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
+
+            // Use DiagnosticSession with timeout enforcement
+            let timeout_config = parse_timeout_config(&cli)?;
+            let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
+
+            // Set up Ctrl+C handler to cancel queries gracefully
+            setup_ctrlc_handler(session.cancel_token());
+
+            // Show effective timeouts unless quiet
+            if !cli.quiet && !cli.json {
+                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
+            }
+
+            // Parse table filter if provided
+            let (schema_filter, table_filter) = if let Some(ref t) = table {
+                if let Some((s, tbl)) = t.split_once('.') {
+                    (Some(s), Some(tbl))
+                } else {
+                    (None, Some(t.as_str()))
+                }
+            } else {
+                (None, None)
+            };
+
+            let result = commands::vacuum::run_vacuum(
+                session.client(),
+                schema_filter,
+                table_filter,
+                threshold,
+            )
+            .await?;
+
+            if cli.json {
+                commands::vacuum::print_json(&result, Some(session.effective_timeouts()))?;
+            } else {
+                commands::vacuum::print_human(&result, cli.quiet);
+            }
+
+            // Exit with appropriate code
+            match result.overall_status {
+                commands::vacuum::VacuumStatus::Critical => std::process::exit(2),
+                commands::vacuum::VacuumStatus::Warning => std::process::exit(1),
+                commands::vacuum::VacuumStatus::Healthy => {}
+            }
+        }
+        Commands::Fix { ref command } => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+
+            // Fix commands require read-write access
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                true, // Always require read-write for fix commands
+                cli.quiet,
+            )?;
+
+            let timeout_config = parse_timeout_config(&cli)?;
+            let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
+            setup_ctrlc_handler(session.cancel_token());
+
+            if !cli.quiet && !cli.json {
+                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
+            }
+
+            match command {
+                FixCommands::Sequence {
+                    sequence,
+                    upgrade_to,
+                    dry_run,
+                    yes,
+                    verify,
+                } => {
+                    // Parse sequence name
+                    let (schema, name) = if let Some((s, n)) = sequence.split_once('.') {
+                        (s, n)
+                    } else {
+                        ("public", sequence.as_str())
+                    };
+
+                    // Parse target type
+                    let target_type = commands::fix::sequence::SequenceType::from_str(upgrade_to)
+                        .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Invalid target type '{}'. Use: integer, bigint",
+                            upgrade_to
+                        )
+                    })?;
+
+                    // Check gates
+                    if !cli.read_write && !cli.allow_primary {
+                        anyhow::bail!("Fix commands require --read-write and --primary flags");
+                    }
+
+                    let mut result = commands::fix::sequence::execute_upgrade(
+                        session.client(),
+                        schema,
+                        name,
+                        target_type,
+                        *dry_run || !*yes,
+                    )
+                    .await?;
+
+                    // Run verification if requested and fix was executed successfully
+                    if *verify && result.executed && result.success {
+                        let verify_steps = commands::fix::sequence::get_verify_steps(schema, name);
+                        let verification = commands::fix::verify::run_verification(&verify_steps);
+                        result.verification = Some(verification);
+                    }
+
+                    if cli.json {
+                        commands::fix::sequence::print_json(
+                            &result,
+                            Some(session.effective_timeouts()),
+                        )?;
+                    } else {
+                        commands::fix::sequence::print_human(&result, cli.quiet);
+                    }
+
+                    if !result.success {
+                        std::process::exit(1);
+                    }
+                }
+                FixCommands::Index {
+                    drop,
+                    dry_run,
+                    yes,
+                    verify,
+                } => {
+                    // Parse index name
+                    let (schema, name) = if let Some((s, n)) = drop.split_once('.') {
+                        (s, n)
+                    } else {
+                        ("public", drop.as_str())
+                    };
+
+                    // Check gates - index drop requires confirmation
+                    if !cli.read_write && !cli.allow_primary {
+                        anyhow::bail!("Fix commands require --read-write and --primary flags");
+                    }
+
+                    let mut result = commands::fix::index::execute_drop(
+                        session.client(),
+                        schema,
+                        name,
+                        *dry_run || !*yes,
+                    )
+                    .await?;
+
+                    // Run verification if requested and fix was executed successfully
+                    if *verify && result.executed && result.success {
+                        let verify_steps = commands::fix::index::get_verify_steps(schema, name);
+                        let verification = commands::fix::verify::run_verification(&verify_steps);
+                        result.verification = Some(verification);
+                    }
+
+                    if cli.json {
+                        commands::fix::index::print_json(
+                            &result,
+                            Some(session.effective_timeouts()),
+                        )?;
+                    } else {
+                        commands::fix::index::print_human(&result, cli.quiet);
+                    }
+
+                    if !result.success {
+                        std::process::exit(1);
+                    }
+                }
+                FixCommands::Vacuum {
+                    table,
+                    freeze,
+                    full,
+                    analyze,
+                    dry_run,
+                    yes,
+                    verify,
+                } => {
+                    // Parse table name
+                    let (schema, name) = if let Some((s, n)) = table.split_once('.') {
+                        (s, n)
+                    } else {
+                        ("public", table.as_str())
+                    };
+
+                    // Check gates - VACUUM FULL requires confirmation
+                    if !cli.read_write && !cli.allow_primary {
+                        anyhow::bail!("Fix commands require --read-write and --primary flags");
+                    }
+                    if *full && !*yes {
+                        anyhow::bail!(
+                            "VACUUM FULL requires ACCESS EXCLUSIVE lock. Use --yes to confirm."
+                        );
+                    }
+
+                    // Get current dead_pct before vacuum for verification
+                    let pre_vacuum_info = if *verify {
+                        commands::fix::vacuum::get_table_vacuum_info(session.client(), schema, name)
+                            .await
+                            .ok()
+                    } else {
+                        None
+                    };
+
+                    let options = commands::fix::vacuum::VacuumOptions {
+                        freeze: *freeze,
+                        full: *full,
+                        analyze: *analyze,
+                    };
+
+                    let mut result = commands::fix::vacuum::execute_vacuum(
+                        session.client(),
+                        schema,
+                        name,
+                        &options,
+                        *dry_run || !*yes,
+                    )
+                    .await?;
+
+                    // Run verification if requested and fix was executed successfully
+                    if *verify && result.executed && result.success {
+                        if let Some(pre_info) = pre_vacuum_info {
+                            let verify_steps = commands::fix::vacuum::get_verify_steps(
+                                schema,
+                                name,
+                                pre_info.dead_pct,
+                            );
+                            let verification =
+                                commands::fix::verify::run_verification(&verify_steps);
+                            result.verification = Some(verification);
+                        }
+                    }
+
+                    if cli.json {
+                        commands::fix::vacuum::print_json(
+                            &result,
+                            Some(session.effective_timeouts()),
+                        )?;
+                    } else {
+                        commands::fix::vacuum::print_human(&result, cli.quiet);
+                    }
+
+                    if !result.success {
+                        std::process::exit(1);
+                    }
+                }
             }
         }
         Commands::Locks {
@@ -1833,11 +2193,13 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 | Commands::Model { .. }
                 | Commands::Init { .. }
                 | Commands::Doctor { .. }
-                | Commands::Triage
+                | Commands::Triage { .. }
                 | Commands::Locks { .. }
                 | Commands::Xid { .. }
                 | Commands::Sequences { .. }
                 | Commands::Indexes { .. }
+                | Commands::Vacuum { .. }
+                | Commands::Fix { .. }
                 | Commands::Context
                 | Commands::Capabilities
                 | Commands::Sql { .. }

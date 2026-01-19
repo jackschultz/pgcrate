@@ -424,6 +424,7 @@ pub mod schema {
     pub const XID: &str = "pgcrate.diagnostics.xid";
     pub const SEQUENCES: &str = "pgcrate.diagnostics.sequences";
     pub const INDEXES: &str = "pgcrate.diagnostics.indexes";
+    pub const VACUUM: &str = "pgcrate.diagnostics.vacuum";
     pub const CONTEXT: &str = "pgcrate.diagnostics.context";
     pub const CAPABILITIES: &str = "pgcrate.diagnostics.capabilities";
 }
