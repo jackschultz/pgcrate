@@ -5,6 +5,7 @@
 mod anonymize;
 mod bootstrap;
 pub mod capabilities;
+pub mod connections;
 pub mod context;
 mod db;
 mod doctor;
@@ -14,6 +15,7 @@ pub mod indexes;
 pub mod locks;
 mod migrations;
 pub mod model;
+pub mod queries;
 mod role;
 mod schema;
 mod seed;

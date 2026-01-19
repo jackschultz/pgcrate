@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+**Phase 3a: Query Performance Diagnostics**
+
+Complete the "why is prod slow?" workflow with query and connection analysis.
+
+### New Commands
+
+- **`pgcrate queries`**: Top queries from pg_stat_statements by execution time, mean time, or call count
+- **`pgcrate connections`**: Connection usage analysis vs max_connections with breakdown by state, user, and database
+
+### Queries Command Features
+
+- **Sort options**: `--by total` (default), `--by mean`, `--by calls`
+- **Limit control**: `--limit N` (default: 10) or `--all` for all tracked queries
+- **Graceful degradation**: Works without pg_stat_statements extension (shows unavailable message)
+- **Cache hit ratio**: Shows buffer cache efficiency per query
+- **Status thresholds**: Critical (mean > 5s), Warning (mean > 1s), Healthy (< 1s)
+
+### Connections Command Features
+
+- **Usage analysis**: Total connections vs max_connections with percentage
+- **State breakdown**: Connections grouped by state (active, idle, idle in transaction)
+- **Grouping options**: `--by-user` and `--by-database` for detailed analysis
+- **Status thresholds**: Critical (> 90%), Warning (> 75%), Healthy (< 75%)
+
+### Capabilities
+
+- `diagnostics.queries` capability added (requires pg_stat_statements extension)
+- `diagnostics.connections` capability added (always available via pg_stat_activity)
+
+---
+
 **Phase 2a: Fix Commands**
 
 Complete the diagnose→fix→verify loop with safe remediation commands.

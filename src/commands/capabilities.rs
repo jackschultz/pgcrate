@@ -116,8 +116,10 @@ pub async fn run_capabilities(client: &Client, read_only: bool) -> Result<Capabi
             requirements: vec![],
             limitations: vec![],
         },
-        // diagnostics.queries - needs pg_stat_statements (Phase 3, not yet implemented)
+        // diagnostics.queries - needs pg_stat_statements
         check_queries_capability(has_pg_stat_statements),
+        // diagnostics.connections - needs pg_stat_activity
+        check_connections_capability(has_pg_stat_activity),
         // fix.sequence - needs write access and pg_sequences
         check_fix_sequence_capability(has_pg_sequences, read_only),
         // fix.cancel - needs pg_cancel_backend
@@ -385,14 +387,7 @@ fn check_queries_capability(has_pg_stat_statements: bool) -> CapabilityInfo {
             )],
         )
     } else {
-        // Even with the extension, this capability is not yet implemented
-        (
-            CapabilityStatus::Unavailable,
-            vec![ReasonInfo::new(
-                ReasonCode::NotApplicable,
-                "Query analysis not yet implemented (planned for Phase 3)",
-            )],
-        )
+        (CapabilityStatus::Available, vec![])
     };
 
     CapabilityInfo {
@@ -402,7 +397,36 @@ fn check_queries_capability(has_pg_stat_statements: bool) -> CapabilityInfo {
         status,
         reasons,
         requirements,
-        limitations: vec!["Not yet implemented".to_string()],
+        limitations: vec![],
+    }
+}
+
+fn check_connections_capability(has_pg_stat_activity: bool) -> CapabilityInfo {
+    let requirements = vec![Requirement {
+        what: "pg_stat_activity SELECT".to_string(),
+        met: has_pg_stat_activity,
+    }];
+
+    let (status, reasons) = if !has_pg_stat_activity {
+        (
+            CapabilityStatus::Unavailable,
+            vec![ReasonInfo::new(
+                ReasonCode::MissingPrivilege,
+                "Cannot read pg_stat_activity",
+            )],
+        )
+    } else {
+        (CapabilityStatus::Available, vec![])
+    };
+
+    CapabilityInfo {
+        id: "diagnostics.connections",
+        name: "Connections",
+        description: "Connection usage analysis",
+        status,
+        reasons,
+        requirements,
+        limitations: vec![],
     }
 }
 
