@@ -285,11 +285,7 @@ enum Commands {
         strict: bool,
     },
     /// Quick database health triage (locks, transactions, XID, sequences, connections)
-    Triage {
-        /// Include structured actions in JSON output
-        #[arg(long)]
-        include_fixes: bool,
-    },
+    Triage,
     /// Inspect blocking locks and long transactions
     Locks {
         /// Show only blocking chains
@@ -1134,7 +1130,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 std::process::exit(exit_code);
             }
         }
-        Commands::Triage { include_fixes } => {
+        Commands::Triage => {
             let config =
                 Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
             let conn_result = connection::resolve_and_validate(
@@ -1162,12 +1158,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
             let results = commands::triage::run_triage(session.client()).await;
 
             if cli.json {
-                commands::triage::print_json(
-                    &results,
-                    Some(session.effective_timeouts()),
-                    include_fixes,
-                    !cli.read_write, // read_only
-                )?;
+                commands::triage::print_json(&results, Some(session.effective_timeouts()))?;
             } else {
                 commands::triage::print_human(&results, cli.quiet);
             }

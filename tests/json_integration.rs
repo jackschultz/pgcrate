@@ -68,7 +68,7 @@ fn test_json_error_missing_database_url() {
     // stdout should contain JSON error
     let json = parse_json(&output);
     assert_eq!(json["ok"], false);
-    assert!(json["error"]["message"]
+    assert!(json["errors"][0]["message"]
         .as_str()
         .unwrap()
         .contains("DATABASE_URL"));
@@ -83,17 +83,17 @@ fn test_json_error_schema() {
 
     // Required fields
     assert!(json.get("ok").is_some(), "Missing 'ok' field");
-    assert!(json.get("error").is_some(), "Missing 'error' field");
+    assert!(json.get("errors").is_some(), "Missing 'errors' field");
     assert!(
-        json["error"].get("message").is_some(),
-        "Missing 'error.message' field"
+        json["errors"][0].get("message").is_some(),
+        "Missing 'errors[0].message' field"
     );
 
     // ok must be false for errors
     assert_eq!(json["ok"], false);
 
     // message must be a non-empty string
-    let message = json["error"]["message"].as_str().unwrap();
+    let message = json["errors"][0]["message"].as_str().unwrap();
     assert!(!message.is_empty(), "Error message should not be empty");
 }
 
@@ -216,7 +216,7 @@ fn test_json_usage_error_missing_required_arg() {
     // stdout should contain JSON error
     let json = parse_json(&output);
     assert_eq!(json["ok"], false);
-    assert!(json["error"]["message"]
+    assert!(json["errors"][0]["message"]
         .as_str()
         .unwrap()
         .contains("--steps"));
@@ -291,7 +291,7 @@ fn test_json_unsupported_command_returns_json_error() {
     let json = parse_json(&output);
     assert_eq!(json["ok"], false);
 
-    let message = json["error"]["message"].as_str().unwrap();
+    let message = json["errors"][0]["message"].as_str().unwrap();
     assert!(
         message.contains("--json not supported"),
         "Error should mention --json not supported: {}",

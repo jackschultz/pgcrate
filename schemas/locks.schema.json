@@ -3,36 +3,33 @@
   "$id": "pgcrate.diagnostics.locks",
   "title": "pgcrate locks output",
   "description": "Blocking locks and long-running transaction analysis",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["ok", "schema_id", "schema_version", "blocking_chains", "long_transactions", "idle_in_transaction"],
+  "allOf": [
+    { "$ref": "envelope.schema.json" }
+  ],
   "properties": {
-    "ok": {
-      "type": "boolean",
-      "const": true
-    },
-    "schema_id": {
-      "type": "string",
-      "const": "pgcrate.diagnostics.locks"
-    },
-    "schema_version": {
-      "type": "string",
-      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
-    },
-    "blocking_chains": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/blockingChain" }
-    },
-    "long_transactions": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/lockProcess" }
-    },
-    "idle_in_transaction": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/lockProcess" }
-    }
+    "schema_id": { "const": "pgcrate.diagnostics.locks" },
+    "data": { "$ref": "#/$defs/locksData" }
   },
   "$defs": {
+    "locksData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["blocking_chains", "long_transactions", "idle_in_transaction"],
+      "properties": {
+        "blocking_chains": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/blockingChain" }
+        },
+        "long_transactions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/lockProcess" }
+        },
+        "idle_in_transaction": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/lockProcess" }
+        }
+      }
+    },
     "lockProcess": {
       "type": "object",
       "additionalProperties": false,

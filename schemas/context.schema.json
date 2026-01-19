@@ -3,23 +3,12 @@
   "$id": "pgcrate.diagnostics.context",
   "title": "pgcrate context output",
   "description": "Connection context, server information, extensions, and privileges",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["ok", "schema_id", "schema_version", "tool_version", "generated_at", "severity", "data"],
+  "allOf": [
+    { "$ref": "envelope.schema.json" }
+  ],
   "properties": {
-    "ok": { "type": "boolean" },
-    "schema_id": { "type": "string", "const": "pgcrate.diagnostics.context" },
-    "schema_version": { "type": "string" },
-    "tool_version": { "type": "string" },
-    "generated_at": { "type": "string", "format": "date-time" },
-    "severity": { "type": "string", "enum": ["healthy", "warning", "critical", "error"] },
-    "partial": { "type": "boolean" },
-    "warnings": { "type": "array" },
-    "errors": { "type": "array" },
-    "timeouts": { "type": "object" },
-    "data": {
-      "$ref": "#/$defs/contextData"
-    }
+    "schema_id": { "const": "pgcrate.diagnostics.context" },
+    "data": { "$ref": "#/$defs/contextData" }
   },
   "$defs": {
     "contextData": {
@@ -89,7 +78,7 @@
         },
         "data_directory": {
           "type": "string",
-          "description": "Data directory path (if accessible)"
+          "description": "Data directory path (only with --no-redact)"
         }
       }
     },

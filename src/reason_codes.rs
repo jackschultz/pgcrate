@@ -13,6 +13,7 @@ use serde::Serialize;
 /// - **Capability**: Missing prerequisites (extensions, privileges, features)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[allow(dead_code)] // Full taxonomy defined; variants used as needed
 pub enum ReasonCode {
     // =========================================================================
     // Operational: Runtime conditions that prevented operation
@@ -121,6 +122,7 @@ impl ReasonCode {
     }
 
     /// Category of the reason code.
+    #[allow(dead_code)]
     pub fn category(&self) -> ReasonCategory {
         match self {
             ReasonCode::ConnectionTimeout
@@ -184,10 +186,17 @@ impl ReasonCode {
                 "55P03" => ReasonCode::LockTimeout, // lock_not_available
 
                 // Class 57 - Operator Intervention
-                "57014" => ReasonCode::QueryCancelled,  // query_canceled (includes statement_timeout)
-                "57P01" => ReasonCode::ServerShutdown,  // admin_shutdown
-                "57P02" => ReasonCode::ServerShutdown,  // crash_shutdown
-                "57P03" => ReasonCode::ServerShutdown,  // cannot_connect_now
+                // 57014 is query_canceled but also used for statement_timeout - check message
+                "57014" => {
+                    if msg.contains("statement timeout") {
+                        ReasonCode::StatementTimeout
+                    } else {
+                        ReasonCode::QueryCancelled
+                    }
+                }
+                "57P01" => ReasonCode::ServerShutdown, // admin_shutdown
+                "57P02" => ReasonCode::ServerShutdown, // crash_shutdown
+                "57P03" => ReasonCode::ServerShutdown, // cannot_connect_now
 
                 _ => Self::classify_message(&msg),
             };
@@ -233,6 +242,7 @@ impl ReasonCode {
 /// Category of reason codes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
+#[allow(dead_code)]
 pub enum ReasonCategory {
     /// Runtime conditions (timeouts, connection issues)
     Operational,
@@ -265,6 +275,7 @@ impl ReasonInfo {
     }
 
     /// Create a reason info with additional structured details.
+    #[allow(dead_code)]
     pub fn with_details(
         code: ReasonCode,
         message: impl Into<String>,
@@ -278,6 +289,7 @@ impl ReasonInfo {
     }
 
     /// Create from a tokio_postgres error.
+    #[allow(dead_code)]
     pub fn from_postgres_error(err: &tokio_postgres::Error) -> Self {
         let code = ReasonCode::from_postgres_error(err);
         Self {
@@ -374,7 +386,10 @@ mod tests {
 
     #[test]
     fn test_reason_info_new() {
-        let info = ReasonInfo::new(ReasonCode::MissingPrivilege, "permission denied for pg_stat_activity");
+        let info = ReasonInfo::new(
+            ReasonCode::MissingPrivilege,
+            "permission denied for pg_stat_activity",
+        );
         assert_eq!(info.code, ReasonCode::MissingPrivilege);
         assert_eq!(info.message, "permission denied for pg_stat_activity");
         assert!(info.details.is_none());

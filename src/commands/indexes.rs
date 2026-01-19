@@ -559,7 +559,11 @@ pub fn print_json(
     // Derive severity from findings
     // Missing indexes with high seq scans are concerning
     // Large amounts of wasted space from unused/duplicates also warrant attention
-    let severity = if result.missing.iter().any(|m| m.seq_scan > 10000 && m.scan_ratio > 100.0) {
+    let severity = if result
+        .missing
+        .iter()
+        .any(|m| m.seq_scan > 10000 && m.scan_ratio > 100.0)
+    {
         // High sequential scans with very poor index coverage
         Severity::Warning
     } else if result.total_unused_bytes > 1_000_000_000
@@ -567,10 +571,12 @@ pub fn print_json(
     {
         // Over 1GB wasted on unused indexes or 500MB on duplicates
         Severity::Warning
-    } else if !result.missing.is_empty() || !result.unused.is_empty() || !result.duplicates.is_empty()
+    } else if !result.missing.is_empty()
+        || !result.unused.is_empty()
+        || !result.duplicates.is_empty()
     {
-        // Some findings, but not critical
-        Severity::Healthy // Index issues are advisory, not health-critical
+        // Some findings - report as warning so automation knows there's something to review
+        Severity::Warning
     } else {
         Severity::Healthy
     };

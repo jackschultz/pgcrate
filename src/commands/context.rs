@@ -116,7 +116,7 @@ pub async fn get_target_info(
 }
 
 /// Query server information
-pub async fn get_server_info(client: &Client) -> Result<ServerInfo> {
+pub async fn get_server_info(client: &Client, no_redact: bool) -> Result<ServerInfo> {
     let row = client
         .query_one(
             r#"
@@ -136,16 +136,20 @@ pub async fn get_server_info(client: &Client) -> Result<ServerInfo> {
     // Extract major version from version_num (e.g., 160001 -> 16)
     let version_major = version_num / 10000;
 
-    // Try to get data directory (may fail without superuser)
-    let data_directory = match client
-        .query_one("SELECT current_setting('data_directory')", &[])
-        .await
-    {
-        Ok(row) => {
-            let dir: String = row.get(0);
-            Some(dir)
+    // Data directory is sensitive (reveals filesystem paths) - only show with --no-redact
+    let data_directory = if no_redact {
+        match client
+            .query_one("SELECT current_setting('data_directory')", &[])
+            .await
+        {
+            Ok(row) => {
+                let dir: String = row.get(0);
+                Some(dir)
+            }
+            Err(_) => None,
         }
-        Err(_) => None,
+    } else {
+        None
     };
 
     Ok(ServerInfo {
@@ -263,7 +267,7 @@ pub async fn run_context(
     no_redact: bool,
 ) -> Result<ContextResult> {
     let target = get_target_info(client, connection_url, read_only, no_redact).await?;
-    let server = get_server_info(client).await?;
+    let server = get_server_info(client, no_redact).await?;
     let extensions = get_extensions(client).await?;
     let privileges = get_privileges(client).await?;
 
@@ -297,7 +301,10 @@ pub fn print_human(result: &ContextResult) {
 
     println!();
     println!("SERVER:");
-    println!("  Version:     {} ({})", ctx.server.version_major, ctx.server.version_num);
+    println!(
+        "  Version:     {} ({})",
+        ctx.server.version_major, ctx.server.version_num
+    );
     println!(
         "  Recovery:    {}",
         if ctx.server.in_recovery {

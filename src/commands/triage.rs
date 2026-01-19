@@ -758,8 +758,6 @@ pub fn print_human(results: &TriageResults, quiet: bool) {
 pub fn print_json(
     results: &TriageResults,
     timeouts: Option<crate::diagnostic::EffectiveTimeouts>,
-    _include_fixes: bool,
-    _read_only: bool,
 ) -> Result<()> {
     use crate::output::{schema, DiagnosticOutput, Severity};
     use crate::reason_codes::ReasonInfo;
@@ -781,9 +779,6 @@ pub fn print_json(
 
     let partial = !results.skipped_checks.is_empty();
 
-    // Note: include_fixes is preserved for API compatibility but actions are already
-    // included in check.next_actions. The flag may enable additional action types
-    // in future versions.
     let output = match timeouts {
         Some(t) => DiagnosticOutput::with_timeouts(schema::TRIAGE, results, severity, t),
         None => DiagnosticOutput::new(schema::TRIAGE, results, severity),

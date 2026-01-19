@@ -166,10 +166,7 @@ pub async fn run_capabilities(client: &Client, read_only: bool) -> Result<Capabi
 
 async fn check_privilege(client: &Client, table: &str, privilege: &str) -> bool {
     client
-        .query_one(
-            "SELECT has_table_privilege($1, $2)",
-            &[&table, &privilege],
-        )
+        .query_one("SELECT has_table_privilege($1, $2)", &[&table, &privilege])
         .await
         .map(|r| r.get::<_, bool>(0))
         .unwrap_or(false)
@@ -177,10 +174,7 @@ async fn check_privilege(client: &Client, table: &str, privilege: &str) -> bool 
 
 async fn check_function_privilege(client: &Client, function: &str) -> bool {
     client
-        .query_one(
-            "SELECT has_function_privilege($1, 'EXECUTE')",
-            &[&function],
-        )
+        .query_one("SELECT has_function_privilege($1, 'EXECUTE')", &[&function])
         .await
         .map(|r| r.get::<_, bool>(0))
         .unwrap_or(false)
@@ -208,12 +202,10 @@ fn check_locks_capability(
     has_pg_terminate: bool,
     read_only: bool,
 ) -> CapabilityInfo {
-    let mut requirements = vec![
-        Requirement {
-            what: "pg_stat_activity SELECT".to_string(),
-            met: has_pg_stat_activity,
-        },
-    ];
+    let mut requirements = vec![Requirement {
+        what: "pg_stat_activity SELECT".to_string(),
+        met: has_pg_stat_activity,
+    }];
 
     let mut reasons = vec![];
     let mut limitations = vec![];
@@ -228,7 +220,8 @@ fn check_locks_capability(
         // Check if cancel/terminate are available
         if !has_pg_cancel || !has_pg_terminate || read_only {
             if read_only {
-                limitations.push("Cancel/terminate actions not available in read-only mode".to_string());
+                limitations
+                    .push("Cancel/terminate actions not available in read-only mode".to_string());
             }
             if !has_pg_cancel {
                 limitations.push("pg_cancel_backend not available".to_string());

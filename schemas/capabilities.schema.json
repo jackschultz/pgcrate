@@ -3,23 +3,12 @@
   "$id": "pgcrate.diagnostics.capabilities",
   "title": "pgcrate capabilities output",
   "description": "Available capabilities based on privileges and connection mode",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["ok", "schema_id", "schema_version", "tool_version", "generated_at", "severity", "data"],
+  "allOf": [
+    { "$ref": "envelope.schema.json" }
+  ],
   "properties": {
-    "ok": { "type": "boolean" },
-    "schema_id": { "type": "string", "const": "pgcrate.diagnostics.capabilities" },
-    "schema_version": { "type": "string" },
-    "tool_version": { "type": "string" },
-    "generated_at": { "type": "string", "format": "date-time" },
-    "severity": { "type": "string", "enum": ["healthy", "warning", "critical", "error"] },
-    "partial": { "type": "boolean" },
-    "warnings": { "type": "array" },
-    "errors": { "type": "array" },
-    "timeouts": { "type": "object" },
-    "data": {
-      "$ref": "#/$defs/capabilitiesData"
-    }
+    "schema_id": { "const": "pgcrate.diagnostics.capabilities" },
+    "data": { "$ref": "#/$defs/capabilitiesData" }
   },
   "$defs": {
     "capabilitiesData": {
@@ -53,12 +42,10 @@
           "type": "string",
           "description": "Brief description of the capability"
         },
-        "status": {
-          "$ref": "#/$defs/capabilityStatus"
-        },
+        "status": { "$ref": "#/$defs/capabilityStatus" },
         "reasons": {
           "type": "array",
-          "items": { "$ref": "#/$defs/reasonInfo" },
+          "items": { "$ref": "envelope.schema.json#/$defs/reasonInfo" },
           "description": "Reasons for degraded/unavailable status"
         },
         "requirements": {
@@ -90,25 +77,6 @@
         "met": {
           "type": "boolean",
           "description": "Whether the requirement is met"
-        }
-      }
-    },
-    "reasonInfo": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["code", "message"],
-      "properties": {
-        "code": {
-          "type": "string",
-          "description": "Reason code"
-        },
-        "message": {
-          "type": "string",
-          "description": "Human-readable message"
-        },
-        "details": {
-          "type": "object",
-          "description": "Optional structured details"
         }
       }
     },
