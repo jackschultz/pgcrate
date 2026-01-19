@@ -736,6 +736,75 @@ CREATE TABLE IF NOT EXISTS pgcrate.schema_migrations (
 - **Schema versioning**: Table is created with IF NOT EXISTS for compatibility
 - **Timestamps**: Uses TIMESTAMPTZ with UTC for consistency
 
+## DIAGNOSTICS
+
+### Health Check Commands
+
+```bash
+# Quick triage (locks, xid, sequences)
+pgcrate triage
+pgcrate triage --json
+pgcrate triage --include-fixes --json  # Include recommended fix actions
+
+# Individual diagnostics
+pgcrate locks                    # Blocking locks and long transactions
+pgcrate xid                      # Transaction ID wraparound analysis
+pgcrate sequences                # Sequence exhaustion check
+pgcrate indexes                  # Missing, unused, duplicate indexes
+pgcrate vacuum                   # Table bloat and vacuum health
+
+# Connection context
+pgcrate context --json           # Connection info, server version, privileges
+pgcrate capabilities --json      # What can this connection do?
+```
+
+**Timeout Flags (for production safety):**
+- `--connect-timeout <ms>` - Connection timeout (default: 5000ms)
+- `--statement-timeout <ms>` - Query timeout (default: 30000ms)
+- `--lock-timeout <ms>` - Lock wait timeout (default: 500ms)
+
+**Exit Codes:**
+- `0` = healthy
+- `1` = warning
+- `2` = critical
+- `10+` = operational failure
+
+### Fix Commands
+
+Safe remediation for issues found by diagnostics:
+
+```bash
+# Sequence fixes (prevent exhaustion)
+pgcrate --read-write --primary fix sequence public.order_seq --upgrade-to bigint --dry-run
+pgcrate --read-write --primary fix sequence public.order_seq --upgrade-to bigint --yes
+
+# Index fixes (remove unused indexes)
+pgcrate --read-write --primary fix index --drop public.idx_unused --dry-run
+pgcrate --read-write --primary fix index --drop public.idx_unused --yes
+
+# Vacuum fixes (reclaim space)
+pgcrate --read-write --primary fix vacuum public.orders --dry-run
+pgcrate --read-write --primary fix vacuum public.orders --yes
+pgcrate --read-write --primary fix vacuum public.orders --full --yes    # ACCESS EXCLUSIVE lock
+pgcrate --read-write --primary fix vacuum public.orders --analyze --yes # Update statistics
+```
+
+**Gate Flags (required for fix operations):**
+- `--read-write` - Required for all fix operations
+- `--primary` - Required for database-modifying operations
+- `--yes` - Required for medium/high risk operations
+
+**Risk Levels:**
+- **Low:** `ALTER SEQUENCE`, regular `VACUUM`
+- **Medium:** `DROP INDEX CONCURRENTLY` (requires `--yes`)
+- **High:** `VACUUM FULL` (requires `--yes`, takes exclusive lock)
+
+**Verification:**
+```bash
+# Run post-fix verification
+pgcrate --read-write --primary fix sequence public.order_seq --upgrade-to bigint --yes --verify
+```
+
 ## GLOBAL FLAGS
 
 - `-d, --database-url <URL>`: Override database connection
@@ -760,6 +829,17 @@ Currently, `--json` is supported for these commands:
 - `snapshot info` - Snapshot details
 - `sql` - SQL query results
 - `status` - Migration status (alias for `migrate status`)
+- `triage` - Health overview with actions
+- `context` - Connection context and server info
+- `capabilities` - Permission discovery
+- `locks` - Blocking locks and transactions
+- `xid` - Transaction ID wraparound
+- `sequences` - Sequence exhaustion check
+- `indexes` - Index health analysis
+- `vacuum` - Table bloat analysis
+- `fix sequence` - Sequence upgrade result
+- `fix index` - Index drop result
+- `fix vacuum` - Vacuum result
 
 For unsupported commands, `--json` returns a JSON error: `"--json not supported for '<cmd>' yet"`.
 

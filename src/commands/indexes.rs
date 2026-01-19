@@ -40,6 +40,18 @@ pub struct UnusedIndex {
     pub is_unique: bool,
     /// Whether this is a primary key (keep for data integrity)
     pub is_primary: bool,
+    /// Whether this index is used as replica identity for logical replication
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub is_replica_identity: bool,
+    /// Name of constraint this index backs (if any)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backing_constraint: Option<String>,
+    /// When stats were last reset (for confidence in usage data)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stats_since: Option<String>,
+    /// Days since stats reset
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stats_age_days: Option<i32>,
 }
 
 /// Indexes that cover the same columns
@@ -131,6 +143,24 @@ pub async fn get_missing_index_candidates(
 
 /// Get indexes that haven't been used since stats reset
 pub async fn get_unused_indexes(client: &Client, limit: usize) -> Result<Vec<UnusedIndex>> {
+    // Get stats reset time first
+    let stats_query = r#"
+        SELECT
+            stats_reset,
+            (EXTRACT(EPOCH FROM (now() - stats_reset)) / 86400)::int as days_old
+        FROM pg_stat_database
+        WHERE datname = current_database()
+    "#;
+
+    let (stats_since, stats_age_days) = match client.query_opt(stats_query, &[]).await? {
+        Some(stats_row) => {
+            let reset: Option<chrono::DateTime<chrono::Utc>> = stats_row.get("stats_reset");
+            let days: Option<i32> = stats_row.get("days_old");
+            (reset.map(|r| r.to_rfc3339()), days)
+        }
+        None => (None, None),
+    };
+
     let query = r#"
         SELECT
             s.schemaname,
@@ -140,9 +170,12 @@ pub async fn get_unused_indexes(client: &Client, limit: usize) -> Result<Vec<Unu
             pg_relation_size(s.indexrelid) as index_size_bytes,
             s.idx_scan,
             i.indisunique as is_unique,
-            i.indisprimary as is_primary
+            i.indisprimary as is_primary,
+            i.indisreplident as is_replica_identity,
+            c.conname as constraint_name
         FROM pg_stat_user_indexes s
         JOIN pg_index i ON s.indexrelid = i.indexrelid
+        LEFT JOIN pg_constraint c ON c.conindid = s.indexrelid
         WHERE s.idx_scan = 0
           AND pg_relation_size(s.indexrelid) > 0
         ORDER BY pg_relation_size(s.indexrelid) DESC
@@ -162,6 +195,10 @@ pub async fn get_unused_indexes(client: &Client, limit: usize) -> Result<Vec<Unu
             idx_scan: row.get("idx_scan"),
             is_unique: row.get("is_unique"),
             is_primary: row.get("is_primary"),
+            is_replica_identity: row.get("is_replica_identity"),
+            backing_constraint: row.get("constraint_name"),
+            stats_since: stats_since.clone(),
+            stats_age_days,
         });
     }
 
@@ -380,6 +417,10 @@ pub fn print_human(result: &IndexesResult, verbose: bool) {
                 "PK"
             } else if u.is_unique {
                 "UNIQ"
+            } else if u.is_replica_identity {
+                "REPL"
+            } else if u.backing_constraint.is_some() {
+                "CNST"
             } else {
                 ""
             };
@@ -397,13 +438,27 @@ pub fn print_human(result: &IndexesResult, verbose: bool) {
 
             if verbose {
                 println!("    table: {}.{}", u.schema, u.table);
+                if u.is_replica_identity {
+                    println!("    WARNING: Used for replica identity (logical replication)");
+                }
+                if let Some(ref constraint) = u.backing_constraint {
+                    println!("    WARNING: Backs constraint '{}'", constraint);
+                }
+                if let Some(days) = u.stats_age_days {
+                    println!("    stats age: {} days", days);
+                }
             }
         }
 
         let droppable: Vec<_> = result
             .unused
             .iter()
-            .filter(|u| !u.is_primary && !u.is_unique)
+            .filter(|u| {
+                !u.is_primary
+                    && !u.is_unique
+                    && !u.is_replica_identity
+                    && u.backing_constraint.is_none()
+            })
             .collect();
 
         if !droppable.is_empty() {
@@ -477,7 +532,12 @@ pub fn print_human(result: &IndexesResult, verbose: bool) {
     let droppable_unused: Vec<_> = result
         .unused
         .iter()
-        .filter(|u| !u.is_primary && !u.is_unique)
+        .filter(|u| {
+            !u.is_primary
+                && !u.is_unique
+                && !u.is_replica_identity
+                && u.backing_constraint.is_none()
+        })
         .collect();
 
     if !droppable_unused.is_empty() || !result.duplicates.is_empty() {

@@ -106,10 +106,21 @@ pub struct TriageResults {
     pub skipped_checks: Vec<SkippedCheck>,
     /// Worst status across all checks
     pub overall_status: CheckStatus,
+    /// Structured fix actions (when --include-fixes is used)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actions: Option<Vec<super::fix::StructuredAction>>,
 }
 
 impl TriageResults {
-    pub fn new(mut checks: Vec<CheckResult>, skipped_checks: Vec<SkippedCheck>) -> Self {
+    pub fn new(checks: Vec<CheckResult>, skipped_checks: Vec<SkippedCheck>) -> Self {
+        Self::with_actions(checks, skipped_checks, None)
+    }
+
+    pub fn with_actions(
+        mut checks: Vec<CheckResult>,
+        skipped_checks: Vec<SkippedCheck>,
+        actions: Option<Vec<super::fix::StructuredAction>>,
+    ) -> Self {
         // Sort by severity: critical first, then warning, then healthy
         checks.sort_by_key(|c| match c.status {
             CheckStatus::Critical => 0,
@@ -132,6 +143,7 @@ impl TriageResults {
             checks,
             skipped_checks,
             overall_status,
+            actions,
         }
     }
 
@@ -752,6 +764,130 @@ pub fn print_human(results: &TriageResults, quiet: bool) {
             }
         }
     }
+}
+
+/// Generate structured fix actions from triage findings.
+///
+/// This is called when --include-fixes is specified. It queries for detailed
+/// information about critical/warning findings and generates actionable fixes.
+pub async fn generate_fix_actions(
+    client: &Client,
+    results: &TriageResults,
+    read_write: bool,
+    is_primary: bool,
+) -> Vec<super::fix::StructuredAction> {
+    use super::fix::index::{create_drop_action, get_index_info};
+    use super::fix::sequence::{create_upgrade_action, get_sequence_info, SequenceType};
+    use super::fix::vacuum::{create_vacuum_action, get_table_vacuum_info, VacuumOptions};
+
+    let mut actions = Vec::new();
+
+    // Generate actions for sequence issues
+    if let Some(check) = results.checks.iter().find(|c| c.name == "sequences") {
+        if check.status == CheckStatus::Critical || check.status == CheckStatus::Warning {
+            // Query for critical sequences
+            let query = r#"
+                SELECT schemaname, sequencename
+                FROM pg_sequences
+                WHERE last_value IS NOT NULL
+                  AND CASE
+                      WHEN increment_by > 0 THEN (last_value::numeric / max_value::numeric * 100)::int
+                      ELSE ((min_value::numeric - last_value::numeric) / (min_value::numeric - max_value::numeric) * 100)::int
+                  END > 70
+                ORDER BY CASE
+                    WHEN increment_by > 0 THEN (last_value::numeric / max_value::numeric * 100)::int
+                    ELSE ((min_value::numeric - last_value::numeric) / (min_value::numeric - max_value::numeric) * 100)::int
+                END DESC
+                LIMIT 5
+            "#;
+
+            if let Ok(rows) = client.query(query, &[]).await {
+                for row in rows {
+                    let schema: String = row.get("schemaname");
+                    let name: String = row.get("sequencename");
+
+                    if let Ok(info) = get_sequence_info(client, &schema, &name).await {
+                        // Only suggest upgrade if not already bigint
+                        if info.data_type != "bigint" {
+                            let action = create_upgrade_action(
+                                &info,
+                                SequenceType::BigInt,
+                                read_write,
+                                is_primary,
+                                false, // Not confirmed
+                            );
+                            actions.push(action);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Generate actions for unused indexes
+    // Query for indexes with 0 scans since stats reset
+    let unused_indexes_query = r#"
+        SELECT
+            schemaname,
+            indexrelname as index_name
+        FROM pg_stat_user_indexes
+        WHERE idx_scan = 0
+          AND schemaname NOT IN ('pg_catalog', 'information_schema')
+        ORDER BY pg_relation_size(indexrelid) DESC
+        LIMIT 5
+    "#;
+
+    if let Ok(rows) = client.query(unused_indexes_query, &[]).await {
+        for row in rows {
+            let schema: String = row.get("schemaname");
+            let index_name: String = row.get("index_name");
+
+            if let Ok(evidence) = get_index_info(client, &schema, &index_name).await {
+                let action = create_drop_action(&evidence, read_write, is_primary, false);
+                actions.push(action);
+            }
+        }
+    }
+
+    // Generate actions for tables needing vacuum
+    // Query for tables with high dead tuple percentage
+    let vacuum_query = r#"
+        SELECT
+            schemaname,
+            relname as table_name,
+            n_dead_tup,
+            n_live_tup,
+            CASE
+                WHEN n_live_tup + n_dead_tup > 0 THEN
+                    (n_dead_tup::float / (n_live_tup + n_dead_tup) * 100)::int
+                ELSE 0
+            END as dead_pct
+        FROM pg_stat_user_tables
+        WHERE n_dead_tup > 10000
+          AND CASE
+              WHEN n_live_tup + n_dead_tup > 0 THEN
+                  (n_dead_tup::float / (n_live_tup + n_dead_tup) * 100)
+              ELSE 0
+          END > 15
+        ORDER BY n_dead_tup DESC
+        LIMIT 5
+    "#;
+
+    if let Ok(rows) = client.query(vacuum_query, &[]).await {
+        for row in rows {
+            let schema: String = row.get("schemaname");
+            let table_name: String = row.get("table_name");
+
+            if let Ok(evidence) = get_table_vacuum_info(client, &schema, &table_name).await {
+                let options = VacuumOptions::default();
+                let action =
+                    create_vacuum_action(&evidence, &options, read_write, is_primary, false);
+                actions.push(action);
+            }
+        }
+    }
+
+    actions
 }
 
 /// Print triage results as JSON with schema versioning.

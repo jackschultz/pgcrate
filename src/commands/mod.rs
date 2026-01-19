@@ -9,6 +9,7 @@ pub mod context;
 mod db;
 mod doctor;
 mod extension;
+pub mod fix;
 pub mod indexes;
 pub mod locks;
 mod migrations;
@@ -20,6 +21,7 @@ pub mod sequences;
 mod snapshot;
 mod sql_cmd;
 pub mod triage;
+pub mod vacuum;
 pub mod xid;
 
 // Re-export snapshot commands from new module
