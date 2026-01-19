@@ -429,6 +429,8 @@ pub mod schema {
     pub const REPLICATION: &str = "pgcrate.diagnostics.replication";
     pub const CONTEXT: &str = "pgcrate.diagnostics.context";
     pub const CAPABILITIES: &str = "pgcrate.diagnostics.capabilities";
+    pub const QUERIES: &str = "pgcrate.diagnostics.queries";
+    pub const CONNECTIONS: &str = "pgcrate.diagnostics.connections";
 }
 
 // =============================================================================
