@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pgcrate.diagnostics.xid",
+  "title": "pgcrate xid output",
+  "description": "Transaction ID wraparound analysis",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "schema_id", "schema_version", "databases", "tables", "vacuum_progress", "overall_status"],
+  "properties": {
+    "ok": {
+      "type": "boolean",
+      "const": true
+    },
+    "schema_id": {
+      "type": "string",
+      "const": "pgcrate.diagnostics.xid"
+    },
+    "schema_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "overall_status": { "$ref": "#/$defs/xidStatus" },
+    "databases": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/databaseXid" }
+    },
+    "tables": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/tableXid" }
+    },
+    "vacuum_progress": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/vacuumProgress" }
+    }
+  },
+  "$defs": {
+    "xidStatus": {
+      "type": "string",
+      "enum": ["healthy", "warning", "critical"]
+    },
+    "databaseXid": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["datname", "xid_age", "pct_used", "status"],
+      "properties": {
+        "datname": { "type": "string" },
+        "xid_age": { "type": "integer" },
+        "pct_used": { "type": "number" },
+        "status": { "$ref": "#/$defs/xidStatus" }
+      }
+    },
+    "tableXid": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "table", "xid_age", "size", "status"],
+      "properties": {
+        "schema": { "type": "string" },
+        "table": { "type": "string" },
+        "xid_age": { "type": "integer" },
+        "size": { "type": "string" },
+        "status": { "$ref": "#/$defs/xidStatus" }
+      }
+    },
+    "vacuumProgress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["table", "phase", "pct_done"],
+      "properties": {
+        "table": { "type": "string" },
+        "phase": { "type": "string" },
+        "pct_done": { "type": "number" }
+      }
+    }
+  }
+}

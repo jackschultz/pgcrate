@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pgcrate.diagnostics.sequences",
+  "title": "pgcrate sequences output",
+  "description": "Sequence exhaustion analysis",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "schema_id", "schema_version", "sequences", "overall_status", "warning_threshold", "critical_threshold"],
+  "properties": {
+    "ok": {
+      "type": "boolean",
+      "const": true
+    },
+    "schema_id": {
+      "type": "string",
+      "const": "pgcrate.diagnostics.sequences"
+    },
+    "schema_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "overall_status": { "$ref": "#/$defs/seqStatus" },
+    "warning_threshold": { "type": "integer" },
+    "critical_threshold": { "type": "integer" },
+    "sequences": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/sequenceInfo" }
+    }
+  },
+  "$defs": {
+    "seqStatus": {
+      "type": "string",
+      "enum": ["healthy", "warning", "critical"]
+    },
+    "sequenceInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "name", "data_type", "last_value", "max_value", "pct_used", "status"],
+      "properties": {
+        "schema": { "type": "string" },
+        "name": { "type": "string" },
+        "data_type": { "type": "string" },
+        "last_value": { "type": "integer" },
+        "max_value": { "type": "integer" },
+        "pct_used": { "type": "number" },
+        "status": { "$ref": "#/$defs/seqStatus" },
+        "estimated_exhaustion": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

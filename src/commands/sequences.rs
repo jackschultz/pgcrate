@@ -252,10 +252,17 @@ pub fn print_human(result: &SequencesResult, quiet: bool, show_all: bool) {
     }
 }
 
-/// Print sequences as JSON
-pub fn print_json(result: &SequencesResult) -> Result<()> {
-    let json = serde_json::to_string_pretty(result)?;
-    println!("{}", json);
+/// Print sequences as JSON with schema versioning.
+pub fn print_json(
+    result: &SequencesResult,
+    timeouts: Option<crate::diagnostic::EffectiveTimeouts>,
+) -> Result<()> {
+    use crate::output::{schema, DiagnosticOutput};
+    let output = match timeouts {
+        Some(t) => DiagnosticOutput::with_timeouts(schema::SEQUENCES, result, t),
+        None => DiagnosticOutput::new(schema::SEQUENCES, result),
+    };
+    output.print()?;
     Ok(())
 }
 

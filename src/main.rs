@@ -7,19 +7,23 @@ mod commands;
 mod config;
 mod connection;
 mod describe;
+mod diagnostic;
 mod diff;
 mod doctor;
+mod exit_codes;
 mod help;
 mod introspect;
 mod migrations;
 mod model;
 mod output;
+mod redact;
 mod seed;
 mod snapshot;
 mod sql;
 mod suggest;
 mod tips;
 use config::Config;
+use diagnostic::{setup_ctrlc_handler, DiagnosticSession, TimeoutConfig};
 use output::{HelpResponse, JsonError, LlmHelpResponse, Output, VersionResponse};
 
 /// Embedded LLM help content (compiled into binary)
@@ -27,6 +31,36 @@ const LLM_HELP: &str = include_str!("../llms.txt");
 
 /// Version from Cargo.toml
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Parse CLI timeout options into a TimeoutConfig.
+fn parse_timeout_config(cli: &Cli) -> Result<TimeoutConfig> {
+    let connect_timeout = cli
+        .connect_timeout
+        .as_ref()
+        .map(|s| diagnostic::parse_duration(s))
+        .transpose()
+        .context("Invalid --connect-timeout")?;
+
+    let statement_timeout = cli
+        .statement_timeout
+        .as_ref()
+        .map(|s| diagnostic::parse_duration(s))
+        .transpose()
+        .context("Invalid --statement-timeout")?;
+
+    let lock_timeout = cli
+        .lock_timeout
+        .as_ref()
+        .map(|s| diagnostic::parse_duration(s))
+        .transpose()
+        .context("Invalid --lock-timeout")?;
+
+    Ok(TimeoutConfig::new(
+        connect_timeout,
+        statement_timeout,
+        lock_timeout,
+    ))
+}
 
 /// Whether the selected command supports JSON output mode.
 /// Note: For commands with subcommands, JSON support can vary by subcommand.
@@ -111,6 +145,23 @@ struct Cli {
     /// Path to snapshot profiles file (default: ./pgcrate.snapshot.toml)
     #[arg(long, global = true)]
     snapshot_config: Option<PathBuf>,
+
+    // Timeout options for diagnostic commands
+    /// Connection timeout (e.g., "5s", "500ms"). Default: 5s
+    #[arg(long = "connect-timeout", global = true, value_name = "DURATION")]
+    connect_timeout: Option<String>,
+
+    /// Statement timeout (e.g., "30s", "1m"). Default: 30s
+    #[arg(long = "statement-timeout", global = true, value_name = "DURATION")]
+    statement_timeout: Option<String>,
+
+    /// Lock timeout (e.g., "500ms", "1s"). Default: 500ms
+    #[arg(long = "lock-timeout", global = true, value_name = "DURATION")]
+    lock_timeout: Option<String>,
+
+    /// Disable redaction of sensitive data in output (INSECURE)
+    #[arg(long = "no-redact", global = true)]
+    no_redact: bool,
 
     #[command(subcommand)]
     command: Commands,
@@ -739,7 +790,7 @@ async fn main() {
     // Gate unsupported commands in JSON mode
     if cli.json && !json_supported(&cli.command) {
         JsonError::new("--json not supported for this command yet".to_string()).print();
-        std::process::exit(1);
+        std::process::exit(exit_codes::OPERATIONAL_FAILURE);
     }
 
     if let Err(e) = run(cli, &output).await {
@@ -762,11 +813,11 @@ async fn main() {
                 let json_err = JsonError::with_details(e.to_string(), full_chain);
                 json_err.print();
             }
-            std::process::exit(1);
+            std::process::exit(exit_codes::OPERATIONAL_FAILURE);
         } else {
             // Human mode: error to stderr with full chain
             eprintln!("Error: {e:#}");
-            std::process::exit(1);
+            std::process::exit(exit_codes::OPERATIONAL_FAILURE);
         }
     }
 }
@@ -1084,11 +1135,23 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 cli.read_write,
                 cli.quiet,
             )?;
-            let client = commands::connect(&conn_result.url).await?;
-            let results = commands::triage::run_triage(&client).await;
+
+            // Use DiagnosticSession with timeout enforcement
+            let timeout_config = parse_timeout_config(&cli)?;
+            let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
+
+            // Set up Ctrl+C handler to cancel queries gracefully
+            setup_ctrlc_handler(session.cancel_token());
+
+            // Show effective timeouts unless quiet
+            if !cli.quiet && !cli.json {
+                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
+            }
+
+            let results = commands::triage::run_triage(session.client()).await;
 
             if cli.json {
-                commands::triage::print_json(&results)?;
+                commands::triage::print_json(&results, Some(session.effective_timeouts()))?;
             } else {
                 commands::triage::print_human(&results, cli.quiet);
             }
@@ -1120,15 +1183,32 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 needs_write || cli.read_write,
                 cli.quiet,
             )?;
-            let client = commands::connect(&conn_result.url).await?;
 
-            // Handle cancel/kill operations
+            // Use DiagnosticSession with timeout enforcement
+            let timeout_config = parse_timeout_config(&cli)?;
+            let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
+
+            // Set up Ctrl+C handler to cancel queries gracefully
+            setup_ctrlc_handler(session.cancel_token());
+
+            let client = session.client();
+
+            // Show effective timeouts unless quiet
+            if !cli.quiet && !cli.json {
+                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
+            }
+
+            // Handle cancel/kill operations (redact by default)
+            let should_redact = !cli.no_redact;
+            if cli.no_redact {
+                eprintln!("pgcrate: WARNING: --no-redact disables credential redaction. Output may contain sensitive data.");
+            }
             if let Some(pid) = cancel {
-                commands::locks::cancel_query(&client, pid, execute).await?;
+                commands::locks::cancel_query(&client, pid, execute, should_redact).await?;
                 return Ok(());
             }
             if let Some(pid) = kill {
-                commands::locks::terminate_connection(&client, pid, execute).await?;
+                commands::locks::terminate_connection(&client, pid, execute, should_redact).await?;
                 return Ok(());
             }
 
@@ -1156,8 +1236,13 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                     commands::locks::get_idle_in_transaction(&client).await?;
             }
 
+            // Apply redaction unless explicitly disabled (warning already printed above)
+            if should_redact {
+                result.redact();
+            }
+
             if cli.json {
-                commands::locks::print_json(&result)?;
+                commands::locks::print_json(&result, Some(session.effective_timeouts()))?;
             } else {
                 if show_blocking {
                     commands::locks::print_blocking_chains(&result.blocking_chains, cli.quiet);
@@ -1193,11 +1278,23 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 cli.read_write,
                 cli.quiet,
             )?;
-            let client = commands::connect(&conn_result.url).await?;
-            let result = commands::xid::run_xid(&client, tables).await?;
+
+            // Use DiagnosticSession with timeout enforcement
+            let timeout_config = parse_timeout_config(&cli)?;
+            let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
+
+            // Set up Ctrl+C handler to cancel queries gracefully
+            setup_ctrlc_handler(session.cancel_token());
+
+            // Show effective timeouts unless quiet
+            if !cli.quiet && !cli.json {
+                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
+            }
+
+            let result = commands::xid::run_xid(session.client(), tables).await?;
 
             if cli.json {
-                commands::xid::print_json(&result)?;
+                commands::xid::print_json(&result, Some(session.effective_timeouts()))?;
             } else {
                 commands::xid::print_human(&result, cli.quiet);
             }
@@ -1221,11 +1318,24 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 cli.read_write,
                 cli.quiet,
             )?;
-            let client = commands::connect(&conn_result.url).await?;
-            let result = commands::sequences::run_sequences(&client, warn, crit).await?;
+
+            // Use DiagnosticSession with timeout enforcement
+            let timeout_config = parse_timeout_config(&cli)?;
+            let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
+
+            // Set up Ctrl+C handler to cancel queries gracefully
+            setup_ctrlc_handler(session.cancel_token());
+
+            // Show effective timeouts unless quiet
+            if !cli.quiet && !cli.json {
+                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
+            }
+
+            let result =
+                commands::sequences::run_sequences(session.client(), warn, crit).await?;
 
             if cli.json {
-                commands::sequences::print_json(&result)?;
+                commands::sequences::print_json(&result, Some(session.effective_timeouts()))?;
             } else {
                 commands::sequences::print_human(&result, cli.quiet, all);
             }
@@ -1252,12 +1362,25 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 cli.read_write,
                 cli.quiet,
             )?;
-            let client = commands::connect(&conn_result.url).await?;
+
+            // Use DiagnosticSession with timeout enforcement
+            let timeout_config = parse_timeout_config(&cli)?;
+            let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
+
+            // Set up Ctrl+C handler to cancel queries gracefully
+            setup_ctrlc_handler(session.cancel_token());
+
+            // Show effective timeouts unless quiet
+            if !cli.quiet && !cli.json {
+                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
+            }
+
             let result =
-                commands::indexes::run_indexes(&client, missing_limit, unused_limit).await?;
+                commands::indexes::run_indexes(session.client(), missing_limit, unused_limit)
+                    .await?;
 
             if cli.json {
-                commands::indexes::print_json(&result)?;
+                commands::indexes::print_json(&result, Some(session.effective_timeouts()))?;
             } else {
                 commands::indexes::print_human(&result, cli.verbose);
             }

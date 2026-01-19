@@ -16,7 +16,7 @@ bytes = "1"
 clap = { version = "4", features = ["derive"] }
 dialoguer = "0.11"
 tokio-postgres = "0.7"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "process"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time", "signal"] }
 colored = "2"
 chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"

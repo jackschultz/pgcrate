@@ -1,11 +1,88 @@
 //! Triage command: Quick health check showing the 20 lines you check first.
 //!
-//! Runs multiple diagnostic checks in parallel, aggregates results,
-//! and provides a summary with drill-down suggestions.
+//! Runs multiple diagnostic checks, aggregates results, and provides
+//! actionable next steps. Degrades gracefully when checks cannot run.
 
 use anyhow::Result;
 use serde::Serialize;
 use tokio_postgres::Client;
+
+/// Why a check was skipped (stable enum for automation).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkipReason {
+    /// Insufficient database privileges to run the check
+    InsufficientPrivilege,
+    /// Required PostgreSQL extension not installed
+    MissingExtension,
+    /// PostgreSQL version too old for this check
+    UnsupportedPostgresVersion,
+    /// Check timed out (statement_timeout hit)
+    StatementTimeout,
+    /// Could not acquire lock (lock_timeout hit)
+    LockTimeout,
+    /// Check not applicable to this database configuration
+    NotApplicable,
+    /// Unexpected error during check execution
+    InternalError,
+}
+
+impl SkipReason {
+    /// Human-readable description of the skip reason.
+    pub fn description(&self) -> &'static str {
+        match self {
+            SkipReason::InsufficientPrivilege => "insufficient privileges",
+            SkipReason::MissingExtension => "required extension not installed",
+            SkipReason::UnsupportedPostgresVersion => "PostgreSQL version not supported",
+            SkipReason::StatementTimeout => "statement timeout exceeded",
+            SkipReason::LockTimeout => "lock timeout exceeded",
+            SkipReason::NotApplicable => "not applicable to this configuration",
+            SkipReason::InternalError => "internal error",
+        }
+    }
+}
+
+/// A check that could not be executed.
+#[derive(Debug, Clone, Serialize)]
+pub struct SkippedCheck {
+    /// Check identifier (e.g., "blocking_locks")
+    pub check_id: &'static str,
+    /// Why the check was skipped (stable enum for automation)
+    pub reason_code: SkipReason,
+    /// Human-readable explanation
+    pub reason_human: String,
+}
+
+/// A structured next action (runnable suggestion).
+#[derive(Debug, Clone, Serialize)]
+pub struct NextAction {
+    /// Command to run (e.g., "pgcrate")
+    pub command: &'static str,
+    /// Command arguments
+    pub args: Vec<&'static str>,
+    /// Why this action helps
+    pub rationale: &'static str,
+}
+
+impl NextAction {
+    /// Create a pgcrate command suggestion.
+    pub fn pgcrate(args: &[&'static str], rationale: &'static str) -> Self {
+        Self {
+            command: "pgcrate",
+            args: args.to_vec(),
+            rationale,
+        }
+    }
+
+    /// Format as a runnable command string.
+    pub fn to_command_string(&self) -> String {
+        if self.args.is_empty() {
+            self.command.to_string()
+        } else {
+            format!("{} {}", self.command, self.args.join(" "))
+        }
+    }
+}
 
 /// Result of a single triage check
 #[derive(Debug, Clone, Serialize)]
@@ -20,8 +97,8 @@ pub struct CheckResult {
     pub summary: String,
     /// Optional detailed information
     pub details: Option<String>,
-    /// Suggested drill-down command
-    pub action: Option<String>,
+    /// Suggested next actions (structured, runnable)
+    pub next_actions: Vec<NextAction>,
 }
 
 /// Status level for a check
@@ -31,7 +108,6 @@ pub enum CheckStatus {
     Healthy,
     Warning,
     Critical,
-    Error,
 }
 
 impl CheckStatus {
@@ -40,16 +116,16 @@ impl CheckStatus {
             CheckStatus::Healthy => "✓",
             CheckStatus::Warning => "⚠",
             CheckStatus::Critical => "✗",
-            CheckStatus::Error => "?",
         }
     }
 
+    /// Exit code for findings: 0=healthy, 1=warning, 2=critical.
+    /// Operational failures use separate codes >= 10 (see exit_codes module).
     pub fn exit_code(&self) -> i32 {
         match self {
             CheckStatus::Healthy => 0,
             CheckStatus::Warning => 1,
             CheckStatus::Critical => 2,
-            CheckStatus::Error => 3,
         }
     }
 }
@@ -57,12 +133,23 @@ impl CheckStatus {
 /// Full triage results
 #[derive(Debug, Serialize)]
 pub struct TriageResults {
+    /// Checks that ran successfully, sorted by severity (critical first)
     pub checks: Vec<CheckResult>,
+    /// Checks that could not run
+    pub skipped_checks: Vec<SkippedCheck>,
+    /// Worst status across all checks
     pub overall_status: CheckStatus,
 }
 
 impl TriageResults {
-    pub fn new(checks: Vec<CheckResult>) -> Self {
+    pub fn new(mut checks: Vec<CheckResult>, skipped_checks: Vec<SkippedCheck>) -> Self {
+        // Sort by severity: critical first, then warning, then healthy
+        checks.sort_by_key(|c| match c.status {
+            CheckStatus::Critical => 0,
+            CheckStatus::Warning => 1,
+            CheckStatus::Healthy => 2,
+        });
+
         let overall_status = checks
             .iter()
             .map(|c| &c.status)
@@ -70,13 +157,13 @@ impl TriageResults {
                 CheckStatus::Healthy => 0,
                 CheckStatus::Warning => 1,
                 CheckStatus::Critical => 2,
-                CheckStatus::Error => 3,
             })
             .cloned()
             .unwrap_or(CheckStatus::Healthy);
 
         Self {
             checks,
+            skipped_checks,
             overall_status,
         }
     }
@@ -86,12 +173,55 @@ impl TriageResults {
     }
 }
 
-/// Run all triage checks and return aggregated results
+/// Classify error message using heuristics (fallback when SQLSTATE unavailable).
+fn classify_error_message(msg: &str) -> SkipReason {
+    let lower = msg.to_lowercase();
+    if lower.contains("permission denied") || lower.contains("must be superuser") {
+        SkipReason::InsufficientPrivilege
+    } else if lower.contains("statement timeout") || lower.contains("canceling statement") {
+        SkipReason::StatementTimeout
+    } else if lower.contains("lock timeout") || lower.contains("could not obtain lock") {
+        SkipReason::LockTimeout
+    } else if lower.contains("does not exist") && lower.contains("extension") {
+        SkipReason::MissingExtension
+    } else {
+        SkipReason::InternalError
+    }
+}
+
+fn classify_error(err: &tokio_postgres::Error) -> (SkipReason, String) {
+    let msg = err.to_string();
+
+    // Check for SQLSTATE codes first (most reliable)
+    if let Some(db_err) = err.as_db_error() {
+        let code = db_err.code().code();
+        let reason = match code {
+            "42501" => SkipReason::InsufficientPrivilege,
+            "57014" => SkipReason::StatementTimeout, // query_canceled
+            "55P03" => SkipReason::LockTimeout,      // lock_not_available
+            _ => classify_error_message(&msg),
+        };
+        return (reason, msg);
+    }
+
+    // Fallback to message heuristics
+    (classify_error_message(&msg), msg)
+}
+
+/// Result of running a single check: either success or skip.
+enum CheckOutcome {
+    Ok(CheckResult),
+    Skip(SkippedCheck),
+}
+
+/// Run all triage checks and return aggregated results.
+/// Checks that fail due to permissions/timeouts are captured as skipped, not errors.
 pub async fn run_triage(client: &Client) -> TriageResults {
+    let mut checks = Vec::new();
+    let mut skipped = Vec::new();
+
     // Run checks sequentially (sharing connection).
-    // For true parallelism we'd need a connection pool, but sequential
-    // is fine for diagnostic queries that complete quickly.
-    let checks = vec![
+    let outcomes = vec![
         check_blocking_locks(client).await,
         check_long_transactions(client).await,
         check_xid_age(client).await,
@@ -101,11 +231,18 @@ pub async fn run_triage(client: &Client) -> TriageResults {
         check_stats_age(client).await,
     ];
 
-    TriageResults::new(checks)
+    for outcome in outcomes {
+        match outcome {
+            CheckOutcome::Ok(result) => checks.push(result),
+            CheckOutcome::Skip(skip) => skipped.push(skip),
+        }
+    }
+
+    TriageResults::new(checks, skipped)
 }
 
 /// Check for blocking lock chains
-async fn check_blocking_locks(client: &Client) -> CheckResult {
+async fn check_blocking_locks(client: &Client) -> CheckOutcome {
     let name = "blocking_locks";
     let label = "BLOCKING LOCKS";
 
@@ -125,14 +262,14 @@ async fn check_blocking_locks(client: &Client) -> CheckResult {
             let oldest_seconds: Option<i32> = row.get("oldest_seconds");
 
             if blocked_count == 0 {
-                CheckResult {
+                CheckOutcome::Ok(CheckResult {
                     name,
                     label,
                     status: CheckStatus::Healthy,
                     summary: "No blocking locks".to_string(),
                     details: None,
-                    action: None,
-                }
+                    next_actions: vec![],
+                })
             } else {
                 let oldest_min = oldest_seconds.unwrap_or(0) / 60;
                 let status = if oldest_min > 30 {
@@ -141,29 +278,34 @@ async fn check_blocking_locks(client: &Client) -> CheckResult {
                     CheckStatus::Warning
                 };
 
-                CheckResult {
+                CheckOutcome::Ok(CheckResult {
                     name,
                     label,
                     status,
                     summary: format!("{} blocked (oldest: {} min)", blocked_count, oldest_min),
                     details: None,
-                    action: Some("pgcrate locks --blocking".to_string()),
-                }
+                    next_actions: vec![
+                        NextAction::pgcrate(
+                            &["locks", "--blocking"],
+                            "Show blocking chains and candidate PIDs for cancellation",
+                        ),
+                    ],
+                })
             }
         }
-        Err(e) => CheckResult {
-            name,
-            label,
-            status: CheckStatus::Error,
-            summary: format!("Query failed: {}", e),
-            details: None,
-            action: None,
-        },
+        Err(e) => {
+            let (reason_code, reason_human) = classify_error(&e);
+            CheckOutcome::Skip(SkippedCheck {
+                check_id: name,
+                reason_code,
+                reason_human,
+            })
+        }
     }
 }
 
 /// Check for long-running transactions
-async fn check_long_transactions(client: &Client) -> CheckResult {
+async fn check_long_transactions(client: &Client) -> CheckOutcome {
     let name = "long_transactions";
     let label = "LONG TRANSACTIONS";
 
@@ -183,14 +325,14 @@ async fn check_long_transactions(client: &Client) -> CheckResult {
             let oldest_seconds: Option<i32> = row.get("oldest_seconds");
 
             if count == 0 {
-                CheckResult {
+                CheckOutcome::Ok(CheckResult {
                     name,
                     label,
                     status: CheckStatus::Healthy,
                     summary: "No long transactions (>5 min)".to_string(),
                     details: None,
-                    action: None,
-                }
+                    next_actions: vec![],
+                })
             } else {
                 let oldest_min = oldest_seconds.unwrap_or(0) / 60;
                 let status = if oldest_min > 30 {
@@ -199,29 +341,34 @@ async fn check_long_transactions(client: &Client) -> CheckResult {
                     CheckStatus::Warning
                 };
 
-                CheckResult {
+                CheckOutcome::Ok(CheckResult {
                     name,
                     label,
                     status,
                     summary: format!("{} long transactions (oldest: {} min)", count, oldest_min),
                     details: None,
-                    action: Some("pgcrate sql \"SELECT pid, state, query_start, query FROM pg_stat_activity WHERE xact_start < now() - interval '5 minutes'\"".to_string()),
-                }
+                    next_actions: vec![
+                        NextAction::pgcrate(
+                            &["locks", "--long-tx", "5"],
+                            "List transactions running longer than 5 minutes",
+                        ),
+                    ],
+                })
             }
         }
-        Err(e) => CheckResult {
-            name,
-            label,
-            status: CheckStatus::Error,
-            summary: format!("Query failed: {}", e),
-            details: None,
-            action: None,
-        },
+        Err(e) => {
+            let (reason_code, reason_human) = classify_error(&e);
+            CheckOutcome::Skip(SkippedCheck {
+                check_id: name,
+                reason_code,
+                reason_human,
+            })
+        }
     }
 }
 
 /// Check transaction ID (XID) age for wraparound risk
-async fn check_xid_age(client: &Client) -> CheckResult {
+async fn check_xid_age(client: &Client) -> CheckOutcome {
     let name = "xid_age";
     let label = "XID AGE";
 
@@ -259,34 +406,37 @@ async fn check_xid_age(client: &Client) -> CheckResult {
                 datname
             );
 
-            let action = if status != CheckStatus::Healthy {
-                Some("VACUUM FREEZE or autovacuum tuning needed".to_string())
+            let next_actions = if status != CheckStatus::Healthy {
+                vec![NextAction::pgcrate(
+                    &["xid"],
+                    "Show detailed XID age by database and table",
+                )]
             } else {
-                None
+                vec![]
             };
 
-            CheckResult {
+            CheckOutcome::Ok(CheckResult {
                 name,
                 label,
                 status,
                 summary,
                 details: None,
-                action,
-            }
+                next_actions,
+            })
         }
-        Err(e) => CheckResult {
-            name,
-            label,
-            status: CheckStatus::Error,
-            summary: format!("Query failed: {}", e),
-            details: None,
-            action: None,
-        },
+        Err(e) => {
+            let (reason_code, reason_human) = classify_error(&e);
+            CheckOutcome::Skip(SkippedCheck {
+                check_id: name,
+                reason_code,
+                reason_human,
+            })
+        }
     }
 }
 
 /// Check sequence exhaustion risk
-async fn check_sequences(client: &Client) -> CheckResult {
+async fn check_sequences(client: &Client) -> CheckOutcome {
     let name = "sequences";
     let label = "SEQUENCES";
 
@@ -328,49 +478,55 @@ async fn check_sequences(client: &Client) -> CheckResult {
             if !critical.is_empty() {
                 let seq_name: String = critical[0].get("seq_name");
                 let pct: i32 = critical[0].get("pct_used");
-                CheckResult {
+                CheckOutcome::Ok(CheckResult {
                     name,
                     label,
                     status: CheckStatus::Critical,
                     summary: format!("{} at {}% (+ {} more)", seq_name, pct, critical.len() - 1),
                     details: None,
-                    action: Some("pgcrate sequences".to_string()),
-                }
+                    next_actions: vec![NextAction::pgcrate(
+                        &["sequences"],
+                        "Show all sequences with exhaustion risk",
+                    )],
+                })
             } else if !warning.is_empty() {
                 let seq_name: String = warning[0].get("seq_name");
                 let pct: i32 = warning[0].get("pct_used");
-                CheckResult {
+                CheckOutcome::Ok(CheckResult {
                     name,
                     label,
                     status: CheckStatus::Warning,
                     summary: format!("{} at {}%", seq_name, pct),
                     details: None,
-                    action: Some("pgcrate sequences".to_string()),
-                }
+                    next_actions: vec![NextAction::pgcrate(
+                        &["sequences"],
+                        "Show all sequences with exhaustion risk",
+                    )],
+                })
             } else {
-                CheckResult {
+                CheckOutcome::Ok(CheckResult {
                     name,
                     label,
                     status: CheckStatus::Healthy,
                     summary: "All sequences healthy".to_string(),
                     details: None,
-                    action: None,
-                }
+                    next_actions: vec![],
+                })
             }
         }
-        Err(e) => CheckResult {
-            name,
-            label,
-            status: CheckStatus::Error,
-            summary: format!("Query failed: {}", e),
-            details: None,
-            action: None,
-        },
+        Err(e) => {
+            let (reason_code, reason_human) = classify_error(&e);
+            CheckOutcome::Skip(SkippedCheck {
+                check_id: name,
+                reason_code,
+                reason_human,
+            })
+        }
     }
 }
 
 /// Check connection usage
-async fn check_connections(client: &Client) -> CheckResult {
+async fn check_connections(client: &Client) -> CheckOutcome {
     let name = "connections";
     let label = "CONNECTIONS";
 
@@ -394,32 +550,37 @@ async fn check_connections(client: &Client) -> CheckResult {
                 CheckStatus::Healthy
             };
 
-            CheckResult {
+            let next_actions = if status != CheckStatus::Healthy {
+                vec![NextAction::pgcrate(
+                    &["sql", "SELECT usename, count(*) FROM pg_stat_activity GROUP BY usename ORDER BY count DESC"],
+                    "Show connection count by user to identify source",
+                )]
+            } else {
+                vec![]
+            };
+
+            CheckOutcome::Ok(CheckResult {
                 name,
                 label,
                 status,
                 summary: format!("{} / {} ({}%)", current, max, pct),
                 details: None,
-                action: if status != CheckStatus::Healthy {
-                    Some("pgcrate sql \"SELECT usename, count(*) FROM pg_stat_activity GROUP BY usename ORDER BY count DESC\"".to_string())
-                } else {
-                    None
-                },
-            }
+                next_actions,
+            })
         }
-        Err(e) => CheckResult {
-            name,
-            label,
-            status: CheckStatus::Error,
-            summary: format!("Query failed: {}", e),
-            details: None,
-            action: None,
-        },
+        Err(e) => {
+            let (reason_code, reason_human) = classify_error(&e);
+            CheckOutcome::Skip(SkippedCheck {
+                check_id: name,
+                reason_code,
+                reason_human,
+            })
+        }
     }
 }
 
 /// Check replication lag
-async fn check_replication_lag(client: &Client) -> CheckResult {
+async fn check_replication_lag(client: &Client) -> CheckOutcome {
     let name = "replication";
     let label = "REPLICATION";
 
@@ -456,18 +617,17 @@ async fn check_replication_lag(client: &Client) -> CheckResult {
                 .map(|a| a.to_string())
                 .unwrap_or_else(|| "unknown".to_string());
 
-            CheckResult {
+            // No pgcrate command for replication yet - leave next_actions empty
+            let next_actions = vec![];
+
+            CheckOutcome::Ok(CheckResult {
                 name,
                 label,
                 status,
                 summary: format!("{}: {} lag {}s", addr_str, state, lag_seconds),
                 details: None,
-                action: if status != CheckStatus::Healthy {
-                    Some("Check replica health and network".to_string())
-                } else {
-                    None
-                },
-            }
+                next_actions,
+            })
         }
         Ok(None) => {
             // No replicas - check if we're a replica ourselves
@@ -475,49 +635,43 @@ async fn check_replication_lag(client: &Client) -> CheckResult {
             match client.query_one(is_replica_query, &[]).await {
                 Ok(row) => {
                     let is_replica: bool = row.get(0);
-                    if is_replica {
-                        CheckResult {
-                            name,
-                            label,
-                            status: CheckStatus::Healthy,
-                            summary: "This is a replica".to_string(),
-                            details: None,
-                            action: None,
-                        }
+                    let summary = if is_replica {
+                        "This is a replica"
                     } else {
-                        CheckResult {
-                            name,
-                            label,
-                            status: CheckStatus::Healthy,
-                            summary: "No replicas configured".to_string(),
-                            details: None,
-                            action: None,
-                        }
-                    }
+                        "No replicas configured"
+                    };
+                    CheckOutcome::Ok(CheckResult {
+                        name,
+                        label,
+                        status: CheckStatus::Healthy,
+                        summary: summary.to_string(),
+                        details: None,
+                        next_actions: vec![],
+                    })
                 }
-                Err(_) => CheckResult {
-                    name,
-                    label,
-                    status: CheckStatus::Healthy,
-                    summary: "No replicas configured".to_string(),
-                    details: None,
-                    action: None,
-                },
+                Err(e) => {
+                    let (reason_code, reason_human) = classify_error(&e);
+                    CheckOutcome::Skip(SkippedCheck {
+                        check_id: name,
+                        reason_code,
+                        reason_human,
+                    })
+                }
             }
         }
-        Err(e) => CheckResult {
-            name,
-            label,
-            status: CheckStatus::Error,
-            summary: format!("Query failed: {}", e),
-            details: None,
-            action: None,
-        },
+        Err(e) => {
+            let (reason_code, reason_human) = classify_error(&e);
+            CheckOutcome::Skip(SkippedCheck {
+                check_id: name,
+                reason_code,
+                reason_human,
+            })
+        }
     }
 }
 
 /// Check if stats have been recently reset (too fresh to be useful)
-async fn check_stats_age(client: &Client) -> CheckResult {
+async fn check_stats_age(client: &Client) -> CheckOutcome {
     let name = "stats_age";
     let label = "STATS AGE";
 
@@ -535,14 +689,14 @@ async fn check_stats_age(client: &Client) -> CheckResult {
             match age_seconds {
                 Some(age) if age < 3600 => {
                     let age_min = age / 60;
-                    CheckResult {
+                    CheckOutcome::Ok(CheckResult {
                         name,
                         label,
                         status: CheckStatus::Warning,
                         summary: format!("Stats reset {} min ago (too fresh)", age_min),
                         details: Some("Stats may not be representative".to_string()),
-                        action: None,
-                    }
+                        next_actions: vec![],
+                    })
                 }
                 Some(age) => {
                     let age_hours = age / 3600;
@@ -552,40 +706,40 @@ async fn check_stats_age(client: &Client) -> CheckResult {
                     } else {
                         format!("Stats age: {} hours", age_hours)
                     };
-                    CheckResult {
+                    CheckOutcome::Ok(CheckResult {
                         name,
                         label,
                         status: CheckStatus::Healthy,
                         summary,
                         details: None,
-                        action: None,
-                    }
+                        next_actions: vec![],
+                    })
                 }
-                None => CheckResult {
+                None => CheckOutcome::Ok(CheckResult {
                     name,
                     label,
                     status: CheckStatus::Healthy,
                     summary: "Stats never reset".to_string(),
                     details: None,
-                    action: None,
-                },
+                    next_actions: vec![],
+                }),
             }
         }
-        Err(e) => CheckResult {
-            name,
-            label,
-            status: CheckStatus::Error,
-            summary: format!("Query failed: {}", e),
-            details: None,
-            action: None,
-        },
+        Err(e) => {
+            let (reason_code, reason_human) = classify_error(&e);
+            CheckOutcome::Skip(SkippedCheck {
+                check_id: name,
+                reason_code,
+                reason_human,
+            })
+        }
     }
 }
 
 /// Print triage results in human-readable format
 pub fn print_human(results: &TriageResults, quiet: bool) {
     if quiet {
-        // In quiet mode, only show non-healthy checks
+        // In quiet mode, only show non-healthy checks and skipped
         for check in &results.checks {
             if check.status != CheckStatus::Healthy {
                 println!(
@@ -594,10 +748,13 @@ pub fn print_human(results: &TriageResults, quiet: bool) {
                     check.label,
                     check.summary
                 );
-                if let Some(ref action) = check.action {
-                    println!("  → {}", action);
+                for action in &check.next_actions {
+                    println!("  → {}", action.to_command_string());
                 }
             }
+        }
+        for skip in &results.skipped_checks {
+            println!("- {}: skipped ({})", skip.check_id, skip.reason_code.description());
         }
         return;
     }
@@ -610,12 +767,12 @@ pub fn print_human(results: &TriageResults, quiet: bool) {
         .max()
         .unwrap_or(0);
 
+    // Print checks (already sorted by severity)
     for check in &results.checks {
         let status_str = match check.status {
             CheckStatus::Healthy => format!("{}  healthy", check.status.emoji()),
             CheckStatus::Warning => format!("{}  WARNING", check.status.emoji()),
             CheckStatus::Critical => format!("{}  CRITICAL", check.status.emoji()),
-            CheckStatus::Error => format!("{}  ERROR", check.status.emoji()),
         };
 
         println!(
@@ -627,28 +784,44 @@ pub fn print_human(results: &TriageResults, quiet: bool) {
         );
     }
 
+    // Print skipped checks if any
+    if !results.skipped_checks.is_empty() {
+        println!();
+        println!("SKIPPED:");
+        for skip in &results.skipped_checks {
+            println!("  {} - {}", skip.check_id, skip.reason_code.description());
+        }
+    }
+
     // Print drill-down suggestions
     let actionable: Vec<_> = results
         .checks
         .iter()
-        .filter(|c| c.action.is_some() && c.status != CheckStatus::Healthy)
+        .filter(|c| !c.next_actions.is_empty() && c.status != CheckStatus::Healthy)
         .collect();
 
     if !actionable.is_empty() {
         println!();
-        println!("DRILL DOWN:");
+        println!("NEXT ACTIONS:");
         for check in actionable {
-            if let Some(ref action) = check.action {
-                println!("  {} → {}", check.label, action);
+            for action in &check.next_actions {
+                println!("  {} → {} ({})", check.label, action.to_command_string(), action.rationale);
             }
         }
     }
 }
 
-/// Print triage results as JSON
-pub fn print_json(results: &TriageResults) -> Result<()> {
-    let json = serde_json::to_string_pretty(results)?;
-    println!("{}", json);
+/// Print triage results as JSON with schema versioning.
+pub fn print_json(
+    results: &TriageResults,
+    timeouts: Option<crate::diagnostic::EffectiveTimeouts>,
+) -> Result<()> {
+    use crate::output::{schema, DiagnosticOutput};
+    let output = match timeouts {
+        Some(t) => DiagnosticOutput::with_timeouts(schema::TRIAGE, results, t),
+        None => DiagnosticOutput::new(schema::TRIAGE, results),
+    };
+    output.print()?;
     Ok(())
 }
 
@@ -656,64 +829,49 @@ pub fn print_json(results: &TriageResults) -> Result<()> {
 mod tests {
     use super::*;
 
+    fn check(name: &'static str, label: &'static str, status: CheckStatus) -> CheckResult {
+        CheckResult {
+            name,
+            label,
+            status,
+            summary: format!("{:?}", status),
+            details: None,
+            next_actions: vec![],
+        }
+    }
+
     #[test]
     fn test_check_status_ordering() {
-        let results = TriageResults::new(vec![
-            CheckResult {
-                name: "test1",
-                label: "TEST1",
-                status: CheckStatus::Healthy,
-                summary: "ok".to_string(),
-                details: None,
-                action: None,
-            },
-            CheckResult {
-                name: "test2",
-                label: "TEST2",
-                status: CheckStatus::Warning,
-                summary: "warn".to_string(),
-                details: None,
-                action: None,
-            },
-        ]);
+        let results = TriageResults::new(
+            vec![
+                check("test1", "TEST1", CheckStatus::Healthy),
+                check("test2", "TEST2", CheckStatus::Warning),
+            ],
+            vec![],
+        );
         assert_eq!(results.overall_status, CheckStatus::Warning);
         assert_eq!(results.exit_code(), 1);
     }
 
     #[test]
     fn test_check_status_critical_wins() {
-        let results = TriageResults::new(vec![
-            CheckResult {
-                name: "test1",
-                label: "TEST1",
-                status: CheckStatus::Warning,
-                summary: "warn".to_string(),
-                details: None,
-                action: None,
-            },
-            CheckResult {
-                name: "test2",
-                label: "TEST2",
-                status: CheckStatus::Critical,
-                summary: "crit".to_string(),
-                details: None,
-                action: None,
-            },
-        ]);
+        let results = TriageResults::new(
+            vec![
+                check("test1", "TEST1", CheckStatus::Warning),
+                check("test2", "TEST2", CheckStatus::Critical),
+            ],
+            vec![],
+        );
         assert_eq!(results.overall_status, CheckStatus::Critical);
         assert_eq!(results.exit_code(), 2);
     }
 
     #[test]
     fn test_all_healthy() {
-        let results = TriageResults::new(vec![CheckResult {
-            name: "test1",
-            label: "TEST1",
-            status: CheckStatus::Healthy,
-            summary: "ok".to_string(),
-            details: None,
-            action: None,
-        }]);
+        let results = TriageResults::new(
+            vec![check("test1", "TEST1", CheckStatus::Healthy)],
+            vec![],
+        );
         assert_eq!(results.overall_status, CheckStatus::Healthy);
         assert_eq!(results.exit_code(), 0);
     }
@@ -723,6 +881,93 @@ mod tests {
         assert_eq!(CheckStatus::Healthy.emoji(), "✓");
         assert_eq!(CheckStatus::Warning.emoji(), "⚠");
         assert_eq!(CheckStatus::Critical.emoji(), "✗");
-        assert_eq!(CheckStatus::Error.emoji(), "?");
+    }
+
+    #[test]
+    fn test_severity_sorting() {
+        // Checks should be sorted: critical first, then warning, then healthy
+        let results = TriageResults::new(
+            vec![
+                check("healthy", "HEALTHY", CheckStatus::Healthy),
+                check("warning", "WARNING", CheckStatus::Warning),
+                check("critical", "CRITICAL", CheckStatus::Critical),
+            ],
+            vec![],
+        );
+        assert_eq!(results.checks[0].name, "critical");
+        assert_eq!(results.checks[1].name, "warning");
+        assert_eq!(results.checks[2].name, "healthy");
+    }
+
+    #[test]
+    fn test_skipped_checks() {
+        let results = TriageResults::new(
+            vec![check("test1", "TEST1", CheckStatus::Healthy)],
+            vec![SkippedCheck {
+                check_id: "replication",
+                reason_code: SkipReason::InsufficientPrivilege,
+                reason_human: "permission denied".to_string(),
+            }],
+        );
+        assert_eq!(results.skipped_checks.len(), 1);
+        assert_eq!(results.skipped_checks[0].check_id, "replication");
+    }
+
+    #[test]
+    fn test_next_action_command_string() {
+        let action = NextAction::pgcrate(&["locks", "--blocking"], "test");
+        assert_eq!(action.to_command_string(), "pgcrate locks --blocking");
+    }
+
+    #[test]
+    fn test_classify_error_message_permission_denied() {
+        assert_eq!(
+            classify_error_message("permission denied for table foo"),
+            SkipReason::InsufficientPrivilege
+        );
+        assert_eq!(
+            classify_error_message("must be superuser to do this"),
+            SkipReason::InsufficientPrivilege
+        );
+    }
+
+    #[test]
+    fn test_classify_error_message_timeout() {
+        assert_eq!(
+            classify_error_message("canceling statement due to statement timeout"),
+            SkipReason::StatementTimeout
+        );
+        assert_eq!(
+            classify_error_message("statement timeout expired"),
+            SkipReason::StatementTimeout
+        );
+    }
+
+    #[test]
+    fn test_classify_error_message_lock() {
+        assert_eq!(
+            classify_error_message("could not obtain lock on relation"),
+            SkipReason::LockTimeout
+        );
+        assert_eq!(
+            classify_error_message("lock timeout"),
+            SkipReason::LockTimeout
+        );
+    }
+
+    #[test]
+    fn test_classify_error_message_extension() {
+        assert_eq!(
+            classify_error_message("extension \"pg_stat_statements\" does not exist"),
+            SkipReason::MissingExtension
+        );
+    }
+
+    #[test]
+    fn test_classify_error_message_unknown() {
+        assert_eq!(
+            classify_error_message("some random error"),
+            SkipReason::InternalError
+        );
     }
 }
