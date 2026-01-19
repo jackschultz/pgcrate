@@ -284,12 +284,10 @@ async fn check_blocking_locks(client: &Client) -> CheckOutcome {
                     status,
                     summary: format!("{} blocked (oldest: {} min)", blocked_count, oldest_min),
                     details: None,
-                    next_actions: vec![
-                        NextAction::pgcrate(
-                            &["locks", "--blocking"],
-                            "Show blocking chains and candidate PIDs for cancellation",
-                        ),
-                    ],
+                    next_actions: vec![NextAction::pgcrate(
+                        &["locks", "--blocking"],
+                        "Show blocking chains and candidate PIDs for cancellation",
+                    )],
                 })
             }
         }
@@ -347,12 +345,10 @@ async fn check_long_transactions(client: &Client) -> CheckOutcome {
                     status,
                     summary: format!("{} long transactions (oldest: {} min)", count, oldest_min),
                     details: None,
-                    next_actions: vec![
-                        NextAction::pgcrate(
-                            &["locks", "--long-tx", "5"],
-                            "List transactions running longer than 5 minutes",
-                        ),
-                    ],
+                    next_actions: vec![NextAction::pgcrate(
+                        &["locks", "--long-tx", "5"],
+                        "List transactions running longer than 5 minutes",
+                    )],
                 })
             }
         }
@@ -754,7 +750,11 @@ pub fn print_human(results: &TriageResults, quiet: bool) {
             }
         }
         for skip in &results.skipped_checks {
-            println!("- {}: skipped ({})", skip.check_id, skip.reason_code.description());
+            println!(
+                "- {}: skipped ({})",
+                skip.check_id,
+                skip.reason_code.description()
+            );
         }
         return;
     }
@@ -805,7 +805,12 @@ pub fn print_human(results: &TriageResults, quiet: bool) {
         println!("NEXT ACTIONS:");
         for check in actionable {
             for action in &check.next_actions {
-                println!("  {} → {} ({})", check.label, action.to_command_string(), action.rationale);
+                println!(
+                    "  {} → {} ({})",
+                    check.label,
+                    action.to_command_string(),
+                    action.rationale
+                );
             }
         }
     }
@@ -868,10 +873,8 @@ mod tests {
 
     #[test]
     fn test_all_healthy() {
-        let results = TriageResults::new(
-            vec![check("test1", "TEST1", CheckStatus::Healthy)],
-            vec![],
-        );
+        let results =
+            TriageResults::new(vec![check("test1", "TEST1", CheckStatus::Healthy)], vec![]);
         assert_eq!(results.overall_status, CheckStatus::Healthy);
         assert_eq!(results.exit_code(), 0);
     }

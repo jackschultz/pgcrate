@@ -172,7 +172,11 @@ mod tests {
         let dsn = "postgres://user:p@ss@localhost:5432/mydb";
         let redacted = redact_dsn(dsn);
         // The password (or part of it) should be replaced with ***
-        assert!(redacted.contains("***"), "password not redacted: {}", redacted);
+        assert!(
+            redacted.contains("***"),
+            "password not redacted: {}",
+            redacted
+        );
         // Should not contain the literal password characters "p@ss"
         assert!(!redacted.contains("p@ss"), "password leaked: {}", redacted);
     }
@@ -215,17 +219,33 @@ mod tests {
         // Double quotes are SQL identifiers, not strings - should be preserved
         let query = r#"SELECT "user_id", "email" FROM "Users" WHERE name = 'secret'"#;
         let redacted = redact_query(query);
-        assert!(redacted.contains(r#""user_id""#), "identifier lost: {}", redacted);
-        assert!(redacted.contains(r#""email""#), "identifier lost: {}", redacted);
-        assert!(redacted.contains(r#""Users""#), "identifier lost: {}", redacted);
-        assert!(!redacted.contains("secret"), "string not redacted: {}", redacted);
+        assert!(
+            redacted.contains(r#""user_id""#),
+            "identifier lost: {}",
+            redacted
+        );
+        assert!(
+            redacted.contains(r#""email""#),
+            "identifier lost: {}",
+            redacted
+        );
+        assert!(
+            redacted.contains(r#""Users""#),
+            "identifier lost: {}",
+            redacted
+        );
+        assert!(
+            !redacted.contains("secret"),
+            "string not redacted: {}",
+            redacted
+        );
     }
 
     #[test]
     fn test_truncate_str_utf8_safe() {
         // Multi-byte UTF-8: each emoji is 4 bytes
         let query = "SELECT '🔥🔥🔥🔥🔥' FROM t"; // 5 fire emojis
-        // This should not panic when truncating
+                                                  // This should not panic when truncating
         let _ = truncate_str(query, 10);
         let _ = truncate_str(query, 15);
         let _ = truncate_str(query, 20);
@@ -236,9 +256,9 @@ mod tests {
         // "café" = 5 bytes (é is 2 bytes), 4 chars
         let s = "café";
         assert_eq!(truncate_str(s, 10), "café"); // no truncation needed
-        assert_eq!(truncate_str(s, 4), "café");  // exactly 4 chars, no truncation
+        assert_eq!(truncate_str(s, 4), "café"); // exactly 4 chars, no truncation
         assert_eq!(truncate_str(s, 3), "caf..."); // truncate to 3 chars
-        assert_eq!(truncate_str(s, 2), "ca...");  // truncate to 2 chars
+        assert_eq!(truncate_str(s, 2), "ca..."); // truncate to 2 chars
     }
 
     #[test]

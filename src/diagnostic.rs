@@ -98,12 +98,7 @@ impl DiagnosticSession {
         let connect_future = tokio_postgres::connect(database_url, NoTls);
         let (client, connection) = tokio::time::timeout(timeouts.connect_timeout, connect_future)
             .await
-            .with_context(|| {
-                format!(
-                    "Connection timed out after {:?}",
-                    timeouts.connect_timeout
-                )
-            })?
+            .with_context(|| format!("Connection timed out after {:?}", timeouts.connect_timeout))?
             .with_context(|| "Failed to connect to database")?;
 
         // Get cancel token before spawning connection task
@@ -298,7 +293,10 @@ mod tests {
     #[test]
     fn test_parse_duration_with_whitespace() {
         assert_eq!(parse_duration("  5s  ").unwrap(), Duration::from_secs(5));
-        assert_eq!(parse_duration(" 500 ms").unwrap(), Duration::from_millis(500));
+        assert_eq!(
+            parse_duration(" 500 ms").unwrap(),
+            Duration::from_millis(500)
+        );
     }
 
     #[test]

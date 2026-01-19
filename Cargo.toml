@@ -1,6 +1,6 @@
 [package]
 name = "pgcrate"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "PostgreSQL companion for teams not using Rails or Django. Migrations, introspection, diffing, and more."
 license = "MIT"

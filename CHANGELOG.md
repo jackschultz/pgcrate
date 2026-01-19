@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.3.0
+
+Production-safe diagnostic commands with safety rails.
+
+### Safety Rails
+
+- **Timeout enforcement**: `--connect-timeout`, `--statement-timeout`, `--lock-timeout` flags on all diagnostic commands
+- **Lock timeout default**: 500ms prevents diagnostics from blocking production queries
+- **Read-only by default**: Diagnostic commands don't modify data
+- **Ctrl+C handling**: Cleanly cancels in-flight queries
+- **Query redaction**: Sensitive values hidden in `--verbose` output
+
+### JSON Output
+
+- **Schema versioning**: All JSON output includes `schema_id` and `schema_version`
+- **Timeouts in output**: JSON includes effective timeout configuration
+- **Consistent envelope**: `{ ok, schema_id, schema_version, timeouts, data }`
+- **Lowercase enums**: Status values are `healthy`, `warning`, `critical`
+
+### Triage Improvements
+
+- **Structured actions**: `next_actions` array with suggested commands
+- **Graceful degradation**: `skipped_checks` with `reason_code` when permissions insufficient
+- **Better summaries**: Overall status reflects worst finding
+
+### Exit Codes
+
+- **0** = healthy
+- **1** = warning
+- **2** = critical
+- **10+** = operational failure (connection error, permission denied, etc.)
+
 ## v0.2.0
 
 Agent-tested improvements based on real-world usage feedback.

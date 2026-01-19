@@ -1331,8 +1331,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
             }
 
-            let result =
-                commands::sequences::run_sequences(session.client(), warn, crit).await?;
+            let result = commands::sequences::run_sequences(session.client(), warn, crit).await?;
 
             if cli.json {
                 commands::sequences::print_json(&result, Some(session.effective_timeouts()))?;
