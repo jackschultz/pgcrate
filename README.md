@@ -135,19 +135,55 @@ Agent-friendly health checks with JSON output for automation:
 
 ```bash
 pgcrate triage                        # Quick health overview (locks, xid, sequences)
-pgcrate triage --json                 # Machine-readable JSON output
+pgcrate triage --include-fixes --json # Include recommended fix actions
 pgcrate context --json                # Connection context, server info, privileges
 pgcrate capabilities --json           # What can this connection do?
 pgcrate locks                         # Blocking locks and long transactions
 pgcrate xid                           # Transaction ID wraparound analysis
 pgcrate sequences                     # Sequence exhaustion check
 pgcrate indexes                       # Missing, unused, duplicate indexes
+pgcrate vacuum                        # Table bloat and vacuum health
 ```
 
 All diagnostic commands support timeout flags for production safety:
 - `--connect-timeout <ms>` - Connection timeout (default: 5000ms)
 - `--statement-timeout <ms>` - Query timeout (default: 30000ms)
 - `--lock-timeout <ms>` - Lock wait timeout (default: 500ms)
+
+### Fix Commands
+
+Safe remediation for issues found by diagnostics:
+
+```bash
+# Sequence fixes (prevent exhaustion)
+pgcrate fix sequence public.order_seq --upgrade-to bigint --dry-run
+pgcrate fix sequence public.order_seq --upgrade-to bigint --yes
+
+# Index fixes (remove unused indexes)
+pgcrate fix index --drop public.idx_unused --dry-run
+pgcrate fix index --drop public.idx_unused --yes
+
+# Vacuum fixes (reclaim space)
+pgcrate fix vacuum public.orders --dry-run
+pgcrate fix vacuum public.orders --yes
+pgcrate fix vacuum public.orders --full --yes    # ACCESS EXCLUSIVE lock
+pgcrate fix vacuum public.orders --analyze --yes # Update statistics
+```
+
+**Gate flags required for fix commands:**
+- `--read-write` - Required for all fix operations
+- `--primary` - Required for database-modifying operations
+- `--yes` - Required for medium/high risk operations
+
+**Risk levels:**
+- **Low:** `ALTER SEQUENCE`, regular `VACUUM`
+- **Medium:** `DROP INDEX CONCURRENTLY` (requires `--yes`)
+- **High:** `VACUUM FULL` (requires `--yes`, takes exclusive lock)
+
+Fix commands include evidence collection, safety checks, and optional verification:
+```bash
+pgcrate --read-write --primary fix sequence public.order_seq --upgrade-to bigint --yes --verify
+```
 
 ### Data Operations
 
@@ -272,6 +308,10 @@ DROP TABLE users;
 | `pgcrate xid` | Transaction ID wraparound analysis |
 | `pgcrate sequences` | Sequence exhaustion check |
 | `pgcrate indexes` | Missing, unused, duplicate indexes |
+| `pgcrate vacuum` | Table bloat and vacuum health |
+| `pgcrate fix sequence` | Upgrade sequence type to prevent exhaustion |
+| `pgcrate fix index` | Drop unused/duplicate indexes |
+| `pgcrate fix vacuum` | Run VACUUM on tables |
 | `pgcrate doctor` | Run health checks |
 | `pgcrate bootstrap` | Setup environment with anonymized data from source |
 | `pgcrate snapshot <cmd>` | Save (with profiles), restore, list, or delete snapshots |

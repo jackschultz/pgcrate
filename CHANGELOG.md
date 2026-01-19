@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+**Phase 2a: Fix Commands**
+
+Complete the diagnose→fix→verify loop with safe remediation commands.
+
+### New Commands
+
+- **`pgcrate vacuum`**: Table bloat and vacuum health diagnostic
+- **`pgcrate fix sequence`**: Upgrade sequence types (smallint→integer→bigint) to prevent exhaustion
+- **`pgcrate fix index --drop`**: Safely drop unused/duplicate indexes with `DROP INDEX CONCURRENTLY`
+- **`pgcrate fix vacuum`**: Run VACUUM on tables (regular, freeze, full, analyze)
+
+### Fix Command Features
+
+- **Gate system**: `--read-write`, `--primary`, `--yes` flags required based on operation risk
+- **Dry-run mode**: All fix commands support `--dry-run` to preview SQL
+- **SQL preview**: Fix actions include exact SQL that will be executed
+- **Evidence collection**: Detailed context about the issue being fixed
+- **Safety checks**: Block dangerous operations (e.g., cannot drop primary key index)
+- **Verification**: `--verify` flag runs post-fix validation
+
+### Triage Enhancements
+
+- **`--include-fixes` flag**: Returns structured fix actions for detected issues
+- **StructuredAction format**: Each action includes command, args, risk level, gates, evidence, and verify steps
+
+### Index Evidence Improvements
+
+- Added `stats_since` and `stats_age_days` for confidence in usage statistics
+- Added `backing_constraint` field for indexes backing constraints
+- Added `is_replica_identity` field for logical replication safety
+
+---
+
 **Phase 1: JSON Contracts Foundation**
 
 ### Breaking Changes
