@@ -278,8 +278,9 @@ pub fn print_human(result: &BloatResult, quiet: bool) {
 
         for t in &result.tables {
             let name = format!("{}.{}", t.schema, t.table);
-            let display_name = if name.len() > 40 {
-                format!("{}...", &name[..37])
+            let display_name = if name.chars().count() > 40 {
+                let truncated: String = name.chars().take(37).collect();
+                format!("{}...", truncated)
             } else {
                 name
             };
@@ -309,8 +310,9 @@ pub fn print_human(result: &BloatResult, quiet: bool) {
 
         for i in &result.indexes {
             let name = format!("{}.{}", i.schema, i.index);
-            let display_name = if name.len() > 40 {
-                format!("{}...", &name[..37])
+            let display_name = if name.chars().count() > 40 {
+                let truncated: String = name.chars().take(37).collect();
+                format!("{}...", truncated)
             } else {
                 name
             };
