@@ -278,7 +278,7 @@ pub async fn run_context(
 }
 
 /// Print context in human-readable format
-pub fn print_human(result: &ContextResult, _quiet: bool) {
+pub fn print_human(result: &ContextResult) {
     let ctx = &result.context;
 
     println!("CONNECTION:");

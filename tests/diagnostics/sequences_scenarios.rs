@@ -241,22 +241,23 @@ fn test_sequences_warning_json_structure() {
     let json: serde_json::Value = serde_json::from_str(&out)
         .unwrap_or_else(|e| panic!("Invalid JSON: {}\nOutput: {}", e, out));
 
-    // Should have sequences array
+    // Should have data field with sequences array
+    let data = json.get("data").expect("JSON should have data field");
     assert!(
-        json.get("sequences").is_some(),
-        "JSON should have sequences: {}",
+        data.get("sequences").is_some(),
+        "JSON should have data.sequences: {}",
         json
     );
 
-    // Should have overall_status
+    // Should have overall_status in data
     assert!(
-        json.get("overall_status").is_some(),
-        "JSON should have overall_status: {}",
+        data.get("overall_status").is_some(),
+        "JSON should have data.overall_status: {}",
         json
     );
 
     // Overall status should be warning
-    let status = json.get("overall_status").and_then(|s| s.as_str());
+    let status = data.get("overall_status").and_then(|s| s.as_str());
     assert!(
         status == Some("warning") || status == Some("Warning"),
         "overall_status should be warning: {}",

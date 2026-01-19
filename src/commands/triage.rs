@@ -7,40 +7,7 @@ use anyhow::Result;
 use serde::Serialize;
 use tokio_postgres::Client;
 
-/// Why a check was skipped (stable enum for automation).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SkipReason {
-    /// Insufficient database privileges to run the check
-    InsufficientPrivilege,
-    /// Required PostgreSQL extension not installed
-    MissingExtension,
-    /// PostgreSQL version too old for this check
-    UnsupportedPostgresVersion,
-    /// Check timed out (statement_timeout hit)
-    StatementTimeout,
-    /// Could not acquire lock (lock_timeout hit)
-    LockTimeout,
-    /// Check not applicable to this database configuration
-    NotApplicable,
-    /// Unexpected error during check execution
-    InternalError,
-}
-
-impl SkipReason {
-    /// Human-readable description of the skip reason.
-    pub fn description(&self) -> &'static str {
-        match self {
-            SkipReason::InsufficientPrivilege => "insufficient privileges",
-            SkipReason::MissingExtension => "required extension not installed",
-            SkipReason::UnsupportedPostgresVersion => "PostgreSQL version not supported",
-            SkipReason::StatementTimeout => "statement timeout exceeded",
-            SkipReason::LockTimeout => "lock timeout exceeded",
-            SkipReason::NotApplicable => "not applicable to this configuration",
-            SkipReason::InternalError => "internal error",
-        }
-    }
-}
+use crate::reason_codes::ReasonCode;
 
 /// A check that could not be executed.
 #[derive(Debug, Clone, Serialize)]
@@ -48,7 +15,7 @@ pub struct SkippedCheck {
     /// Check identifier (e.g., "blocking_locks")
     pub check_id: &'static str,
     /// Why the check was skipped (stable enum for automation)
-    pub reason_code: SkipReason,
+    pub reason_code: ReasonCode,
     /// Human-readable explanation
     pub reason_human: String,
 }
@@ -173,39 +140,10 @@ impl TriageResults {
     }
 }
 
-/// Classify error message using heuristics (fallback when SQLSTATE unavailable).
-fn classify_error_message(msg: &str) -> SkipReason {
-    let lower = msg.to_lowercase();
-    if lower.contains("permission denied") || lower.contains("must be superuser") {
-        SkipReason::InsufficientPrivilege
-    } else if lower.contains("statement timeout") || lower.contains("canceling statement") {
-        SkipReason::StatementTimeout
-    } else if lower.contains("lock timeout") || lower.contains("could not obtain lock") {
-        SkipReason::LockTimeout
-    } else if lower.contains("does not exist") && lower.contains("extension") {
-        SkipReason::MissingExtension
-    } else {
-        SkipReason::InternalError
-    }
-}
-
-fn classify_error(err: &tokio_postgres::Error) -> (SkipReason, String) {
+fn classify_error(err: &tokio_postgres::Error) -> (ReasonCode, String) {
     let msg = err.to_string();
-
-    // Check for SQLSTATE codes first (most reliable)
-    if let Some(db_err) = err.as_db_error() {
-        let code = db_err.code().code();
-        let reason = match code {
-            "42501" => SkipReason::InsufficientPrivilege,
-            "57014" => SkipReason::StatementTimeout, // query_canceled
-            "55P03" => SkipReason::LockTimeout,      // lock_not_available
-            _ => classify_error_message(&msg),
-        };
-        return (reason, msg);
-    }
-
-    // Fallback to message heuristics
-    (classify_error_message(&msg), msg)
+    let code = ReasonCode::from_postgres_error(err);
+    (code, msg)
 }
 
 /// Result of running a single check: either success or skip.
@@ -816,73 +754,15 @@ pub fn print_human(results: &TriageResults, quiet: bool) {
     }
 }
 
-/// Triage results with optional actions
-#[derive(Debug, Serialize)]
-pub struct TriageResultsWithActions {
-    #[serde(flatten)]
-    pub results: TriageResults,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub actions: Vec<crate::actions::Action>,
-}
-
-/// Generate actions based on triage results
-fn generate_actions(results: &TriageResults, read_only: bool) -> Vec<crate::actions::Action> {
-    use crate::actions;
-    let mut all_actions = vec![];
-
-    for check in &results.checks {
-        match check.name {
-            "blocking_locks" if check.status != CheckStatus::Healthy => {
-                // Extract counts from summary if possible
-                // For now, use default values
-                all_actions.extend(actions::blocking_locks_actions(1, 0));
-            }
-            "long_transactions" if check.status != CheckStatus::Healthy => {
-                all_actions.extend(actions::long_transaction_actions(1, 0));
-            }
-            "sequences" if check.status != CheckStatus::Healthy => {
-                // Parse schema.name from summary if available
-                // For now generate a generic investigation action
-                all_actions.push(
-                    crate::actions::Action::investigate(
-                        "investigate-sequences",
-                        "Show sequences with exhaustion risk",
-                        vec!["sequences".to_string()],
-                    ),
-                );
-            }
-            "xid_age" if check.status != CheckStatus::Healthy => {
-                all_actions.extend(actions::xid_age_actions("unknown", 0));
-            }
-            "connections" if check.status != CheckStatus::Healthy => {
-                all_actions.extend(actions::connection_actions(0, 0, 0));
-            }
-            _ => {}
-        }
-    }
-
-    // Mark actions as unavailable if we're in read-only mode
-    if read_only {
-        for action in &mut all_actions {
-            if action.mutates && action.available {
-                action.available = false;
-                action.unavailable_reason = Some("Requires --read-write mode".to_string());
-            }
-        }
-    }
-
-    all_actions
-}
-
 /// Print triage results as JSON with schema versioning.
 pub fn print_json(
     results: &TriageResults,
     timeouts: Option<crate::diagnostic::EffectiveTimeouts>,
-    include_fixes: bool,
-    read_only: bool,
+    _include_fixes: bool,
+    _read_only: bool,
 ) -> Result<()> {
     use crate::output::{schema, DiagnosticOutput, Severity};
-    use crate::reason_codes::{ReasonCode, ReasonInfo};
+    use crate::reason_codes::ReasonInfo;
 
     // Derive severity from overall status
     let severity = Severity::from_check_status(&results.overall_status);
@@ -892,47 +772,24 @@ pub fn print_json(
         .skipped_checks
         .iter()
         .map(|skip| {
-            let code = match skip.reason_code {
-                SkipReason::InsufficientPrivilege => ReasonCode::MissingPrivilege,
-                SkipReason::MissingExtension => ReasonCode::MissingExtension,
-                SkipReason::UnsupportedPostgresVersion => ReasonCode::UnsupportedVersion,
-                SkipReason::StatementTimeout => ReasonCode::StatementTimeout,
-                SkipReason::LockTimeout => ReasonCode::LockTimeout,
-                SkipReason::NotApplicable => ReasonCode::NotApplicable,
-                SkipReason::InternalError => ReasonCode::InternalError,
-            };
-            ReasonInfo::new(code, format!("{}: {}", skip.check_id, skip.reason_human))
+            ReasonInfo::new(
+                skip.reason_code,
+                format!("{}: {}", skip.check_id, skip.reason_human),
+            )
         })
         .collect();
 
     let partial = !results.skipped_checks.is_empty();
 
-    if include_fixes {
-        // Generate actions and include in output
-        let actions = generate_actions(results, read_only);
-        let results_with_actions = TriageResultsWithActions {
-            results: TriageResults {
-                checks: results.checks.clone(),
-                skipped_checks: results.skipped_checks.clone(),
-                overall_status: results.overall_status,
-            },
-            actions,
-        };
-
-        let output = match timeouts {
-            Some(t) => DiagnosticOutput::with_timeouts(schema::TRIAGE, &results_with_actions, severity, t),
-            None => DiagnosticOutput::new(schema::TRIAGE, &results_with_actions, severity),
-        };
-        let output = output.with_partial(partial).with_warnings(warnings);
-        output.print()?;
-    } else {
-        let output = match timeouts {
-            Some(t) => DiagnosticOutput::with_timeouts(schema::TRIAGE, results, severity, t),
-            None => DiagnosticOutput::new(schema::TRIAGE, results, severity),
-        };
-        let output = output.with_partial(partial).with_warnings(warnings);
-        output.print()?;
-    }
+    // Note: include_fixes is preserved for API compatibility but actions are already
+    // included in check.next_actions. The flag may enable additional action types
+    // in future versions.
+    let output = match timeouts {
+        Some(t) => DiagnosticOutput::with_timeouts(schema::TRIAGE, results, severity, t),
+        None => DiagnosticOutput::new(schema::TRIAGE, results, severity),
+    };
+    let output = output.with_partial(partial).with_warnings(warnings);
+    output.print()?;
 
     Ok(())
 }
@@ -1015,7 +872,7 @@ mod tests {
             vec![check("test1", "TEST1", CheckStatus::Healthy)],
             vec![SkippedCheck {
                 check_id: "replication",
-                reason_code: SkipReason::InsufficientPrivilege,
+                reason_code: ReasonCode::MissingPrivilege,
                 reason_human: "permission denied".to_string(),
             }],
         );
@@ -1027,57 +884,5 @@ mod tests {
     fn test_next_action_command_string() {
         let action = NextAction::pgcrate(&["locks", "--blocking"], "test");
         assert_eq!(action.to_command_string(), "pgcrate locks --blocking");
-    }
-
-    #[test]
-    fn test_classify_error_message_permission_denied() {
-        assert_eq!(
-            classify_error_message("permission denied for table foo"),
-            SkipReason::InsufficientPrivilege
-        );
-        assert_eq!(
-            classify_error_message("must be superuser to do this"),
-            SkipReason::InsufficientPrivilege
-        );
-    }
-
-    #[test]
-    fn test_classify_error_message_timeout() {
-        assert_eq!(
-            classify_error_message("canceling statement due to statement timeout"),
-            SkipReason::StatementTimeout
-        );
-        assert_eq!(
-            classify_error_message("statement timeout expired"),
-            SkipReason::StatementTimeout
-        );
-    }
-
-    #[test]
-    fn test_classify_error_message_lock() {
-        assert_eq!(
-            classify_error_message("could not obtain lock on relation"),
-            SkipReason::LockTimeout
-        );
-        assert_eq!(
-            classify_error_message("lock timeout"),
-            SkipReason::LockTimeout
-        );
-    }
-
-    #[test]
-    fn test_classify_error_message_extension() {
-        assert_eq!(
-            classify_error_message("extension \"pg_stat_statements\" does not exist"),
-            SkipReason::MissingExtension
-        );
-    }
-
-    #[test]
-    fn test_classify_error_message_unknown() {
-        assert_eq!(
-            classify_error_message("some random error"),
-            SkipReason::InternalError
-        );
     }
 }

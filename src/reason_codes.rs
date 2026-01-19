@@ -155,18 +155,6 @@ impl ReasonCode {
         }
     }
 
-    /// Whether this reason is typically retryable.
-    pub fn is_retryable(&self) -> bool {
-        matches!(
-            self,
-            ReasonCode::ConnectionTimeout
-                | ReasonCode::StatementTimeout
-                | ReasonCode::LockTimeout
-                | ReasonCode::QueryCancelled
-                | ReasonCode::TooManyConnections
-        )
-    }
-
     /// Classify a tokio_postgres error into a reason code.
     pub fn from_postgres_error(err: &tokio_postgres::Error) -> Self {
         let msg = err.to_string().to_lowercase();
@@ -334,14 +322,6 @@ mod tests {
             ReasonCode::MissingExtension.category(),
             ReasonCategory::Capability
         );
-    }
-
-    #[test]
-    fn test_reason_code_retryable() {
-        assert!(ReasonCode::ConnectionTimeout.is_retryable());
-        assert!(ReasonCode::LockTimeout.is_retryable());
-        assert!(!ReasonCode::MissingPrivilege.is_retryable());
-        assert!(!ReasonCode::RequiresReadWrite.is_retryable());
     }
 
     #[test]

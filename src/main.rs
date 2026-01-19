@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use clap::{error::ErrorKind, Args, Parser, Subcommand};
 use std::path::PathBuf;
 
-mod actions;
 mod anonymize;
 mod commands;
 mod config;
@@ -1313,7 +1312,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
             if cli.json {
                 commands::xid::print_json(&result, Some(session.effective_timeouts()))?;
             } else {
-                commands::xid::print_human(&result, cli.quiet);
+                commands::xid::print_human(&result);
             }
 
             // Exit with appropriate code
@@ -1437,7 +1436,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
             if cli.json {
                 commands::context::print_json(&result, Some(session.effective_timeouts()))?;
             } else {
-                commands::context::print_human(&result, cli.quiet);
+                commands::context::print_human(&result);
             }
         }
         Commands::Capabilities => {
@@ -1474,7 +1473,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
             if cli.json {
                 commands::capabilities::print_json(&result, Some(session.effective_timeouts()))?;
             } else {
-                commands::capabilities::print_human(&result, cli.quiet);
+                commands::capabilities::print_human(&result);
             }
         }
         Commands::Sql {

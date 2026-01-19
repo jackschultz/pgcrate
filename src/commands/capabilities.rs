@@ -165,24 +165,22 @@ pub async fn run_capabilities(client: &Client, read_only: bool) -> Result<Capabi
 }
 
 async fn check_privilege(client: &Client, table: &str, privilege: &str) -> bool {
-    let query = format!(
-        "SELECT has_table_privilege('{}', '{}')",
-        table, privilege
-    );
     client
-        .query_one(&query, &[])
+        .query_one(
+            "SELECT has_table_privilege($1, $2)",
+            &[&table, &privilege],
+        )
         .await
         .map(|r| r.get::<_, bool>(0))
         .unwrap_or(false)
 }
 
 async fn check_function_privilege(client: &Client, function: &str) -> bool {
-    let query = format!(
-        "SELECT has_function_privilege('{}', 'EXECUTE')",
-        function
-    );
     client
-        .query_one(&query, &[])
+        .query_one(
+            "SELECT has_function_privilege($1, 'EXECUTE')",
+            &[&function],
+        )
         .await
         .map(|r| r.get::<_, bool>(0))
         .unwrap_or(false)
@@ -190,16 +188,15 @@ async fn check_function_privilege(client: &Client, function: &str) -> bool {
 
 async fn check_extension_and_privilege(client: &Client, extension: &str) -> bool {
     // Check if extension exists and we can read from it
-    let query = format!(
-        r#"
-        SELECT EXISTS (
-            SELECT 1 FROM pg_extension WHERE extname = '{}'
-        ) AND has_table_privilege('{}', 'SELECT')
-        "#,
-        extension, extension
-    );
     client
-        .query_one(&query, &[])
+        .query_one(
+            r#"
+            SELECT EXISTS (
+                SELECT 1 FROM pg_extension WHERE extname = $1
+            ) AND has_table_privilege($1, 'SELECT')
+            "#,
+            &[&extension],
+        )
         .await
         .map(|r| r.get::<_, bool>(0))
         .unwrap_or(false)
@@ -557,7 +554,7 @@ fn check_fix_terminate_capability(has_pg_terminate: bool, read_only: bool) -> Ca
 }
 
 /// Print capabilities in human-readable format
-pub fn print_human(result: &CapabilitiesResult, _quiet: bool) {
+pub fn print_human(result: &CapabilitiesResult) {
     println!("CAPABILITIES:");
     println!();
 

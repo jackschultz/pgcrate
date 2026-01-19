@@ -204,7 +204,7 @@ fn format_xid(age: i64) -> String {
 }
 
 /// Print XID results in human-readable format
-pub fn print_human(result: &XidResult, _quiet: bool) {
+pub fn print_human(result: &XidResult) {
     // Database-level XID
     println!("DATABASE XID AGE:");
     println!();
