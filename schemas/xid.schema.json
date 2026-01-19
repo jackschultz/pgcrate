@@ -36,7 +36,7 @@
   "$defs": {
     "xidStatus": {
       "type": "string",
-      "enum": ["Healthy", "Warning", "Critical"]
+      "enum": ["healthy", "warning", "critical"]
     },
     "databaseXid": {
       "type": "object",

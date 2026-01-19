@@ -74,26 +74,42 @@ pub fn redact_query(query: &str) -> String {
     // First, remove string literals
     let redacted = redact_string_literals(query);
 
-    // Then truncate if too long
-    if redacted.len() > MAX_QUERY_LENGTH {
-        format!("{}...", &redacted[..MAX_QUERY_LENGTH])
-    } else {
-        redacted
-    }
+    // Then truncate if too long (using char count, not byte count, to avoid UTF-8 panic)
+    truncate_str(&redacted, MAX_QUERY_LENGTH)
 }
 
-/// Replace string literals with '...' placeholder.
+/// Truncate a string to at most `max_chars` characters, appending "..." if truncated.
+/// Safe for UTF-8: uses char boundaries, not byte slicing.
+fn truncate_str(s: &str, max_chars: usize) -> String {
+    let char_count = s.chars().count();
+    if char_count <= max_chars {
+        return s.to_string();
+    }
+
+    // Find byte position of the max_chars-th character
+    let byte_pos = s
+        .char_indices()
+        .nth(max_chars)
+        .map(|(i, _)| i)
+        .unwrap_or(s.len());
+
+    format!("{}...", &s[..byte_pos])
+}
+
+/// Replace SQL string literals with '...' placeholder.
+///
+/// Only single-quoted strings are redacted (SQL string literals).
+/// Double-quoted strings are identifiers in SQL (e.g., "column_name") and are preserved.
 fn redact_string_literals(query: &str) -> String {
     let mut result = String::with_capacity(query.len());
     let mut in_string = false;
-    let mut string_char = ' ';
     let mut chars = query.chars().peekable();
 
     while let Some(c) = chars.next() {
         if in_string {
-            // Check for escaped quote or end of string
-            if c == string_char {
-                if chars.peek() == Some(&string_char) {
+            // Check for escaped quote ('') or end of string
+            if c == '\'' {
+                if chars.peek() == Some(&'\'') {
                     // Escaped quote - skip both
                     chars.next();
                 } else {
@@ -103,10 +119,9 @@ fn redact_string_literals(query: &str) -> String {
                 }
             }
             // Otherwise skip (we're in a string literal)
-        } else if c == '\'' || c == '"' {
-            // Start of string literal
+        } else if c == '\'' {
+            // Start of string literal (single quotes only)
             in_string = true;
-            string_char = c;
         } else {
             result.push(c);
         }
@@ -193,5 +208,50 @@ mod tests {
         let redacted = redact_query(query);
         assert!(!redacted.contains("O''Brien"));
         assert!(redacted.contains("'...'"));
+    }
+
+    #[test]
+    fn test_redact_query_preserves_double_quoted_identifiers() {
+        // Double quotes are SQL identifiers, not strings - should be preserved
+        let query = r#"SELECT "user_id", "email" FROM "Users" WHERE name = 'secret'"#;
+        let redacted = redact_query(query);
+        assert!(redacted.contains(r#""user_id""#), "identifier lost: {}", redacted);
+        assert!(redacted.contains(r#""email""#), "identifier lost: {}", redacted);
+        assert!(redacted.contains(r#""Users""#), "identifier lost: {}", redacted);
+        assert!(!redacted.contains("secret"), "string not redacted: {}", redacted);
+    }
+
+    #[test]
+    fn test_truncate_str_utf8_safe() {
+        // Multi-byte UTF-8: each emoji is 4 bytes
+        let query = "SELECT '🔥🔥🔥🔥🔥' FROM t"; // 5 fire emojis
+        // This should not panic when truncating
+        let _ = truncate_str(query, 10);
+        let _ = truncate_str(query, 15);
+        let _ = truncate_str(query, 20);
+    }
+
+    #[test]
+    fn test_truncate_str_boundary() {
+        // "café" = 5 bytes (é is 2 bytes), 4 chars
+        let s = "café";
+        assert_eq!(truncate_str(s, 10), "café"); // no truncation needed
+        assert_eq!(truncate_str(s, 4), "café");  // exactly 4 chars, no truncation
+        assert_eq!(truncate_str(s, 3), "caf..."); // truncate to 3 chars
+        assert_eq!(truncate_str(s, 2), "ca...");  // truncate to 2 chars
+    }
+
+    #[test]
+    fn test_redact_query_utf8_truncation() {
+        // Create a query with UTF-8 that exceeds MAX_QUERY_LENGTH
+        let base = "SELECT * FROM t WHERE x = ";
+        let padding = "あ".repeat(300); // Japanese hiragana, 3 bytes each
+        let query = format!("{}{}", base, padding);
+
+        // Should not panic
+        let redacted = redact_query(&query);
+        assert!(redacted.ends_with("..."));
+        // Character count should be at most MAX_QUERY_LENGTH + 3
+        assert!(redacted.chars().count() <= MAX_QUERY_LENGTH + 3);
     }
 }

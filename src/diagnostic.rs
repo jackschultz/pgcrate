@@ -5,11 +5,12 @@
 //! - Connection timeout (fast fail on unreachable hosts)
 //! - Statement timeout (bounded query runtime)
 //! - Lock timeout (never wait on locks)
+//! - Ctrl+C cancellation (best-effort query cancellation)
 
 use anyhow::{Context, Result};
 use std::time::Duration;
 use tokio::sync::oneshot;
-use tokio_postgres::{Client, NoTls};
+use tokio_postgres::{CancelToken, Client, NoTls};
 
 /// Default timeout values for diagnostic sessions.
 /// These are conservative defaults for production safety.
@@ -83,6 +84,8 @@ impl TimeoutConfig {
 pub struct DiagnosticSession {
     client: Client,
     pub timeouts: TimeoutConfig,
+    /// Cancel token for aborting running queries (Ctrl+C support)
+    cancel_token: CancelToken,
     /// Sender to signal connection task to stop (triggers on drop)
     _shutdown_tx: oneshot::Sender<()>,
 }
@@ -103,6 +106,9 @@ impl DiagnosticSession {
             })?
             .with_context(|| "Failed to connect to database")?;
 
+        // Get cancel token before spawning connection task
+        let cancel_token = client.cancel_token();
+
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
         // Spawn connection handler that exits on shutdown or error
@@ -122,8 +128,16 @@ impl DiagnosticSession {
         Ok(Self {
             client,
             timeouts,
+            cancel_token,
             _shutdown_tx: shutdown_tx,
         })
+    }
+
+    /// Get a cloneable cancel token for Ctrl+C handling.
+    ///
+    /// The cancel token can be used to cancel running queries from a signal handler.
+    pub fn cancel_token(&self) -> CancelToken {
+        self.cancel_token.clone()
     }
 
     /// Get a reference to the underlying client.
@@ -191,6 +205,39 @@ pub fn parse_duration(s: &str) -> Result<Duration> {
     };
 
     Ok(duration)
+}
+
+/// Set up Ctrl+C (SIGINT) handling for graceful query cancellation.
+///
+/// When Ctrl+C is pressed:
+/// 1. Attempts to cancel any running query via the cancel token
+/// 2. Exits with the INTERRUPTED exit code
+///
+/// This should be called after establishing a database connection.
+/// The cancel token is obtained from `DiagnosticSession::cancel_token()`.
+pub fn setup_ctrlc_handler(cancel_token: CancelToken) {
+    use crate::exit_codes;
+
+    // Spawn a task to handle Ctrl+C
+    tokio::spawn(async move {
+        // Wait for Ctrl+C signal
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            eprintln!("Failed to listen for Ctrl+C: {}", e);
+            return;
+        }
+
+        // Signal received - attempt to cancel running query
+        eprintln!("\nInterrupted (Ctrl+C). Cancelling query...");
+
+        // Cancel the query (best effort - may fail if already completed)
+        // Note: cancel_query requires TLS parameter matching the connection
+        if let Err(e) = cancel_token.cancel_query(NoTls).await {
+            eprintln!("Warning: Failed to cancel query: {}", e);
+        }
+
+        // Exit with interrupted code
+        std::process::exit(exit_codes::INTERRUPTED);
+    });
 }
 
 #[cfg(test)]

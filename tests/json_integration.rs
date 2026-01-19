@@ -56,12 +56,13 @@ fn test_json_error_missing_database_url() {
     // When DATABASE_URL is not set and no -d flag, should get JSON error
     let output = run_pgcrate_no_db(&["--json", "migrate", "status"]);
 
-    // Should exit with code 1 (application error)
+    // Should exit with code 10 (operational failure)
+    // Exit codes 0-2 are reserved for findings (healthy/warning/critical)
     assert!(!output.status.success(), "Should fail without DATABASE_URL");
     assert_eq!(
         output.status.code(),
-        Some(1),
-        "Should exit with code 1 for app errors"
+        Some(10),
+        "Should exit with code 10 for operational failures"
     );
 
     // stdout should contain JSON error
@@ -278,11 +279,12 @@ fn test_json_unsupported_command_returns_json_error() {
     // `migrate up` is not yet supported for JSON output
     let output = run_pgcrate_no_db(&["--json", "migrate", "up"]);
 
-    // Should exit with code 1
+    // Should exit with code 10 (operational failure)
+    // Exit codes 0-2 are reserved for findings (healthy/warning/critical)
     assert_eq!(
         output.status.code(),
-        Some(1),
-        "Should exit with code 1 for unsupported command"
+        Some(10),
+        "Should exit with code 10 for operational failures"
     );
 
     // stdout should contain JSON error

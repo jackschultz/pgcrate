@@ -108,7 +108,6 @@ pub enum CheckStatus {
     Healthy,
     Warning,
     Critical,
-    Error,
 }
 
 impl CheckStatus {
@@ -117,16 +116,16 @@ impl CheckStatus {
             CheckStatus::Healthy => "✓",
             CheckStatus::Warning => "⚠",
             CheckStatus::Critical => "✗",
-            CheckStatus::Error => "?",
         }
     }
 
+    /// Exit code for findings: 0=healthy, 1=warning, 2=critical.
+    /// Operational failures use separate codes >= 10 (see exit_codes module).
     pub fn exit_code(&self) -> i32 {
         match self {
             CheckStatus::Healthy => 0,
             CheckStatus::Warning => 1,
             CheckStatus::Critical => 2,
-            CheckStatus::Error => 3,
         }
     }
 }
@@ -147,9 +146,8 @@ impl TriageResults {
         // Sort by severity: critical first, then warning, then healthy
         checks.sort_by_key(|c| match c.status {
             CheckStatus::Critical => 0,
-            CheckStatus::Error => 1,
-            CheckStatus::Warning => 2,
-            CheckStatus::Healthy => 3,
+            CheckStatus::Warning => 1,
+            CheckStatus::Healthy => 2,
         });
 
         let overall_status = checks
@@ -159,7 +157,6 @@ impl TriageResults {
                 CheckStatus::Healthy => 0,
                 CheckStatus::Warning => 1,
                 CheckStatus::Critical => 2,
-                CheckStatus::Error => 3,
             })
             .cloned()
             .unwrap_or(CheckStatus::Healthy);
@@ -776,7 +773,6 @@ pub fn print_human(results: &TriageResults, quiet: bool) {
             CheckStatus::Healthy => format!("{}  healthy", check.status.emoji()),
             CheckStatus::Warning => format!("{}  WARNING", check.status.emoji()),
             CheckStatus::Critical => format!("{}  CRITICAL", check.status.emoji()),
-            CheckStatus::Error => format!("{}  ERROR", check.status.emoji()),
         };
 
         println!(
@@ -879,7 +875,6 @@ mod tests {
         assert_eq!(CheckStatus::Healthy.emoji(), "✓");
         assert_eq!(CheckStatus::Warning.emoji(), "⚠");
         assert_eq!(CheckStatus::Critical.emoji(), "✗");
-        assert_eq!(CheckStatus::Error.emoji(), "?");
     }
 
     #[test]

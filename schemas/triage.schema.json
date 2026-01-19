@@ -39,7 +39,7 @@
   "$defs": {
     "checkStatus": {
       "type": "string",
-      "enum": ["healthy", "warning", "critical", "error"]
+      "enum": ["healthy", "warning", "critical"]
     },
     "skipReason": {
       "type": "string",

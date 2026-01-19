@@ -10,6 +10,7 @@ mod describe;
 mod diagnostic;
 mod diff;
 mod doctor;
+mod exit_codes;
 mod help;
 mod introspect;
 mod migrations;
@@ -22,7 +23,7 @@ mod sql;
 mod suggest;
 mod tips;
 use config::Config;
-use diagnostic::{DiagnosticSession, TimeoutConfig};
+use diagnostic::{setup_ctrlc_handler, DiagnosticSession, TimeoutConfig};
 use output::{HelpResponse, JsonError, LlmHelpResponse, Output, VersionResponse};
 
 /// Embedded LLM help content (compiled into binary)
@@ -789,7 +790,7 @@ async fn main() {
     // Gate unsupported commands in JSON mode
     if cli.json && !json_supported(&cli.command) {
         JsonError::new("--json not supported for this command yet".to_string()).print();
-        std::process::exit(1);
+        std::process::exit(exit_codes::OPERATIONAL_FAILURE);
     }
 
     if let Err(e) = run(cli, &output).await {
@@ -812,11 +813,11 @@ async fn main() {
                 let json_err = JsonError::with_details(e.to_string(), full_chain);
                 json_err.print();
             }
-            std::process::exit(1);
+            std::process::exit(exit_codes::OPERATIONAL_FAILURE);
         } else {
             // Human mode: error to stderr with full chain
             eprintln!("Error: {e:#}");
-            std::process::exit(1);
+            std::process::exit(exit_codes::OPERATIONAL_FAILURE);
         }
     }
 }
@@ -1139,6 +1140,9 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
             let timeout_config = parse_timeout_config(&cli)?;
             let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
 
+            // Set up Ctrl+C handler to cancel queries gracefully
+            setup_ctrlc_handler(session.cancel_token());
+
             // Show effective timeouts unless quiet
             if !cli.quiet && !cli.json {
                 eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
@@ -1183,6 +1187,10 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
             // Use DiagnosticSession with timeout enforcement
             let timeout_config = parse_timeout_config(&cli)?;
             let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
+
+            // Set up Ctrl+C handler to cancel queries gracefully
+            setup_ctrlc_handler(session.cancel_token());
+
             let client = session.client();
 
             // Show effective timeouts unless quiet
@@ -1275,6 +1283,9 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
             let timeout_config = parse_timeout_config(&cli)?;
             let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
 
+            // Set up Ctrl+C handler to cancel queries gracefully
+            setup_ctrlc_handler(session.cancel_token());
+
             // Show effective timeouts unless quiet
             if !cli.quiet && !cli.json {
                 eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
@@ -1311,6 +1322,9 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
             // Use DiagnosticSession with timeout enforcement
             let timeout_config = parse_timeout_config(&cli)?;
             let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
+
+            // Set up Ctrl+C handler to cancel queries gracefully
+            setup_ctrlc_handler(session.cancel_token());
 
             // Show effective timeouts unless quiet
             if !cli.quiet && !cli.json {
@@ -1352,6 +1366,9 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
             // Use DiagnosticSession with timeout enforcement
             let timeout_config = parse_timeout_config(&cli)?;
             let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
+
+            // Set up Ctrl+C handler to cancel queries gracefully
+            setup_ctrlc_handler(session.cancel_token());
 
             // Show effective timeouts unless quiet
             if !cli.quiet && !cli.json {
