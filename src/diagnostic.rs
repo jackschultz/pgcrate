@@ -176,12 +176,12 @@ pub fn parse_duration(s: &str) -> Result<Duration> {
     }
 
     // Try to find the unit suffix
-    let (num_part, unit) = if s.ends_with("ms") {
-        (&s[..s.len() - 2], "ms")
-    } else if s.ends_with('s') {
-        (&s[..s.len() - 1], "s")
-    } else if s.ends_with('m') {
-        (&s[..s.len() - 1], "m")
+    let (num_part, unit) = if let Some(stripped) = s.strip_suffix("ms") {
+        (stripped, "ms")
+    } else if let Some(stripped) = s.strip_suffix('s') {
+        (stripped, "s")
+    } else if let Some(stripped) = s.strip_suffix('m') {
+        (stripped, "m")
     } else {
         // Default to seconds if no unit
         (s, "s")

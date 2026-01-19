@@ -82,61 +82,49 @@ pub async fn run_capabilities(client: &Client, read_only: bool) -> Result<Capabi
     let has_pg_terminate = check_function_privilege(client, "pg_terminate_backend(int)").await;
     let has_pg_stat_statements = check_extension_and_privilege(client, "pg_stat_statements").await;
 
-    let mut capabilities = Vec::new();
-
-    // diagnostics.triage - always available (uses minimal queries)
-    capabilities.push(CapabilityInfo {
-        id: "diagnostics.triage",
-        name: "Triage",
-        description: "Quick database health check",
-        status: CapabilityStatus::Available,
-        reasons: vec![],
-        requirements: vec![],
-        limitations: vec![],
-    });
-
-    // diagnostics.locks - needs pg_stat_activity
-    capabilities.push(check_locks_capability(
-        has_pg_stat_activity,
-        has_pg_cancel,
-        has_pg_terminate,
-        read_only,
-    ));
-
-    // diagnostics.sequences - needs pg_sequences
-    capabilities.push(check_sequences_capability(has_pg_sequences, read_only));
-
-    // diagnostics.indexes - needs pg_stat_user_indexes
-    capabilities.push(check_indexes_capability(
-        has_pg_stat_user_indexes,
-        has_pg_stat_user_tables,
-    ));
-
-    // diagnostics.xid - needs pg_database
-    capabilities.push(check_xid_capability(has_pg_database));
-
-    // diagnostics.context - always available
-    capabilities.push(CapabilityInfo {
-        id: "diagnostics.context",
-        name: "Context",
-        description: "Connection and server information",
-        status: CapabilityStatus::Available,
-        reasons: vec![],
-        requirements: vec![],
-        limitations: vec![],
-    });
-
-    // diagnostics.queries - needs pg_stat_statements (Phase 3, not yet implemented)
-    capabilities.push(check_queries_capability(has_pg_stat_statements));
-
-    // fix.sequence - needs write access and pg_sequences
-    capabilities.push(check_fix_sequence_capability(has_pg_sequences, read_only));
-
-    // fix.cancel - needs pg_cancel_backend
-    capabilities.push(check_fix_cancel_capability(has_pg_cancel, read_only));
-
-    // fix.terminate - needs pg_terminate_backend
-    capabilities.push(check_fix_terminate_capability(has_pg_terminate, read_only));
+    let capabilities = vec![
+        // diagnostics.triage - always available (uses minimal queries)
+        CapabilityInfo {
+            id: "diagnostics.triage",
+            name: "Triage",
+            description: "Quick database health check",
+            status: CapabilityStatus::Available,
+            reasons: vec![],
+            requirements: vec![],
+            limitations: vec![],
+        },
+        // diagnostics.locks - needs pg_stat_activity
+        check_locks_capability(
+            has_pg_stat_activity,
+            has_pg_cancel,
+            has_pg_terminate,
+            read_only,
+        ),
+        // diagnostics.sequences - needs pg_sequences
+        check_sequences_capability(has_pg_sequences, read_only),
+        // diagnostics.indexes - needs pg_stat_user_indexes
+        check_indexes_capability(has_pg_stat_user_indexes, has_pg_stat_user_tables),
+        // diagnostics.xid - needs pg_database
+        check_xid_capability(has_pg_database),
+        // diagnostics.context - always available
+        CapabilityInfo {
+            id: "diagnostics.context",
+            name: "Context",
+            description: "Connection and server information",
+            status: CapabilityStatus::Available,
+            reasons: vec![],
+            requirements: vec![],
+            limitations: vec![],
+        },
+        // diagnostics.queries - needs pg_stat_statements (Phase 3, not yet implemented)
+        check_queries_capability(has_pg_stat_statements),
+        // fix.sequence - needs write access and pg_sequences
+        check_fix_sequence_capability(has_pg_sequences, read_only),
+        // fix.cancel - needs pg_cancel_backend
+        check_fix_cancel_capability(has_pg_cancel, read_only),
+        // fix.terminate - needs pg_terminate_backend
+        check_fix_terminate_capability(has_pg_terminate, read_only),
+    ];
 
     // Calculate summary
     let summary = CapabilitySummary {

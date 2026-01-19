@@ -513,10 +513,7 @@ mod tests {
         assert!(!err.ok);
         assert_eq!(err.errors.len(), 1);
         assert_eq!(err.errors[0].message, "Connection failed");
-        assert_eq!(
-            err.errors[0].details,
-            Some("Host not found".to_string())
-        );
+        assert_eq!(err.errors[0].details, Some("Host not found".to_string()));
     }
 
     #[test]

@@ -70,7 +70,7 @@ fn json_supported(command: &Commands) -> bool {
         Commands::Describe { .. } => true,
         Commands::Diff { .. } => true,
         Commands::Doctor { .. } => true,
-        Commands::Triage { .. } => true,
+        Commands::Triage => true,
         Commands::Locks { .. } => true,
         Commands::Xid { .. } => true,
         Commands::Sequences { .. } => true,
@@ -1211,11 +1211,11 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 eprintln!("pgcrate: WARNING: --no-redact disables credential redaction. Output may contain sensitive data.");
             }
             if let Some(pid) = cancel {
-                commands::locks::cancel_query(&client, pid, execute, should_redact).await?;
+                commands::locks::cancel_query(client, pid, execute, should_redact).await?;
                 return Ok(());
             }
             if let Some(pid) = kill {
-                commands::locks::terminate_connection(&client, pid, execute, should_redact).await?;
+                commands::locks::terminate_connection(client, pid, execute, should_redact).await?;
                 return Ok(());
             }
 
@@ -1231,16 +1231,16 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
             };
 
             if show_blocking {
-                result.blocking_chains = commands::locks::get_blocking_chains(&client).await?;
+                result.blocking_chains = commands::locks::get_blocking_chains(client).await?;
             }
             if show_long_tx {
                 let min_minutes = long_tx.unwrap_or(5);
                 result.long_transactions =
-                    commands::locks::get_long_transactions(&client, min_minutes).await?;
+                    commands::locks::get_long_transactions(client, min_minutes).await?;
             }
             if show_idle {
                 result.idle_in_transaction =
-                    commands::locks::get_idle_in_transaction(&client).await?;
+                    commands::locks::get_idle_in_transaction(client).await?;
             }
 
             // Apply redaction unless explicitly disabled (warning already printed above)
@@ -1833,7 +1833,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 | Commands::Model { .. }
                 | Commands::Init { .. }
                 | Commands::Doctor { .. }
-                | Commands::Triage { .. }
+                | Commands::Triage
                 | Commands::Locks { .. }
                 | Commands::Xid { .. }
                 | Commands::Sequences { .. }
