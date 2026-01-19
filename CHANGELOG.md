@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.3.0
 
 **Phase 3a: Query Performance Diagnostics**
 
