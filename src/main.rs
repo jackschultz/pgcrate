@@ -177,6 +177,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Migration commands (up, down, status, new, baseline)
+    #[command(visible_alias = "migration")]
     Migrate {
         #[command(subcommand)]
         command: MigrateCommands,
@@ -486,6 +487,7 @@ enum MigrateCommands {
     /// Show migration status
     Status,
     /// Create a new migration file
+    #[command(visible_alias = "create")]
     New {
         /// Migration name (e.g., create_users)
         name: String,

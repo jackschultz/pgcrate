@@ -175,14 +175,16 @@ pub fn print_human(result: &SequencesResult, quiet: bool, show_all: bool) {
 
     for seq in to_show {
         let full_name = format!("{}.{}", seq.schema, seq.name);
+        // Use chars().count() for UTF-8 safe length check
+        let display_name = if full_name.chars().count() > 40 {
+            format!("{}...", full_name.chars().take(37).collect::<String>())
+        } else {
+            full_name
+        };
         println!(
             "  {} {:40} {:>12} {:>12} {:>6.1}%",
             seq.status.emoji(),
-            if full_name.len() > 40 {
-                format!("{}...", &full_name[..37])
-            } else {
-                full_name
-            },
+            display_name,
             format_number(seq.last_value),
             format_number(seq.max_value),
             seq.pct_used
