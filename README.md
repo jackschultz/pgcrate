@@ -129,6 +129,26 @@ pgcrate extension list        # Installed extensions
 pgcrate extension list --available  # Extensions available to install
 ```
 
+### Diagnostics
+
+Agent-friendly health checks with JSON output for automation:
+
+```bash
+pgcrate triage                        # Quick health overview (locks, xid, sequences)
+pgcrate triage --json                 # Machine-readable JSON output
+pgcrate context --json                # Connection context, server info, privileges
+pgcrate capabilities --json           # What can this connection do?
+pgcrate locks                         # Blocking locks and long transactions
+pgcrate xid                           # Transaction ID wraparound analysis
+pgcrate sequences                     # Sequence exhaustion check
+pgcrate indexes                       # Missing, unused, duplicate indexes
+```
+
+All diagnostic commands support timeout flags for production safety:
+- `--connect-timeout <ms>` - Connection timeout (default: 5000ms)
+- `--statement-timeout <ms>` - Query timeout (default: 30000ms)
+- `--lock-timeout <ms>` - Lock wait timeout (default: 500ms)
+
 ### Data Operations
 
 ```bash
@@ -145,17 +165,31 @@ pgcrate doctor                        # Health checks for CI
 
 ### CI/CD Integration
 
-Query commands support `--json` for machine-readable output:
+Commands support `--json` for machine-readable output with versioned schemas:
 
 ```bash
 pgcrate migrate status --json     # JSON migration status
-pgcrate doctor --json             # JSON health report
+pgcrate triage --json             # JSON health check with severity
+pgcrate context --json            # JSON connection/server info
+pgcrate capabilities --json       # JSON capability discovery
 pgcrate diff --from $PROD --to $DEV --json  # JSON diff
 pgcrate snapshot list --json      # JSON snapshot list
-pgcrate snapshot info dev --json  # JSON snapshot details
 ```
 
-Exit codes: `0` = success, `1` = action needed (e.g., pending migrations), `2` = error.
+JSON output uses a consistent envelope:
+```json
+{
+  "ok": true,
+  "schema_id": "pgcrate.diagnostics.triage",
+  "schema_version": "2.0.0",
+  "tool_version": "0.3.0",
+  "generated_at": "2026-01-19T12:00:00Z",
+  "severity": "warning",
+  "data": { ... }
+}
+```
+
+Exit codes for diagnostics: `0` = healthy, `1` = warning, `2` = critical, `10+` = operational failure.
 
 ## Why pgcrate?
 
@@ -231,6 +265,13 @@ DROP TABLE users;
 | `pgcrate sql` | Run ad-hoc SQL (alias: `query`) |
 | `pgcrate seed <cmd>` | List, run, validate, or diff seed data |
 | `pgcrate model <cmd>` | Run, compile, test, lint, graph, new, or show models |
+| `pgcrate triage` | Quick health check (locks, xid, sequences) |
+| `pgcrate context` | Connection context, server info, privileges |
+| `pgcrate capabilities` | What can this connection do? |
+| `pgcrate locks` | Blocking locks and long transactions |
+| `pgcrate xid` | Transaction ID wraparound analysis |
+| `pgcrate sequences` | Sequence exhaustion check |
+| `pgcrate indexes` | Missing, unused, duplicate indexes |
 | `pgcrate doctor` | Run health checks |
 | `pgcrate bootstrap` | Setup environment with anonymized data from source |
 | `pgcrate snapshot <cmd>` | Save (with profiles), restore, list, or delete snapshots |
