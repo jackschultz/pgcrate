@@ -1431,7 +1431,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
 
                     // Run verification if requested and fix was executed successfully
                     if *verify && result.executed && result.success {
-                        let verify_steps = commands::fix::index::get_verify_steps(schema, name);
+                        let verify_steps = commands::fix::index::get_verify_steps(name);
                         let verification = commands::fix::verify::run_verification(&verify_steps);
                         result.verification = Some(verification);
                     }
@@ -1475,15 +1475,6 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                         );
                     }
 
-                    // Get current dead_pct before vacuum for verification
-                    let pre_vacuum_info = if *verify {
-                        commands::fix::vacuum::get_table_vacuum_info(session.client(), schema, name)
-                            .await
-                            .ok()
-                    } else {
-                        None
-                    };
-
                     let options = commands::fix::vacuum::VacuumOptions {
                         freeze: *freeze,
                         full: *full,
@@ -1501,16 +1492,9 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
 
                     // Run verification if requested and fix was executed successfully
                     if *verify && result.executed && result.success {
-                        if let Some(pre_info) = pre_vacuum_info {
-                            let verify_steps = commands::fix::vacuum::get_verify_steps(
-                                schema,
-                                name,
-                                pre_info.dead_pct,
-                            );
-                            let verification =
-                                commands::fix::verify::run_verification(&verify_steps);
-                            result.verification = Some(verification);
-                        }
+                        let verify_steps = commands::fix::vacuum::get_verify_steps();
+                        let verification = commands::fix::verify::run_verification(&verify_steps);
+                        result.verification = Some(verification);
                     }
 
                     if cli.json {

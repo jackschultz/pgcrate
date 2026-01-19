@@ -11,7 +11,10 @@ use anyhow::{bail, Context, Result};
 use serde::Serialize;
 use tokio_postgres::Client;
 
-use super::common::{ActionGates, ActionType, FixResult, Risk, StructuredAction, VerifyStep};
+use super::common::{
+    print_fix_result, ActionGates, ActionType, FixResult, Risk, StructuredAction, VerifyStep,
+};
+use crate::sql::quote_ident;
 
 /// Sequence type hierarchy
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -116,18 +119,6 @@ pub fn generate_upgrade_sql(schema: &str, name: &str, target_type: SequenceType)
         quote_ident(name),
         target_type.to_sql()
     )
-}
-
-/// Simple identifier quoting (doesn't handle all edge cases)
-fn quote_ident(s: &str) -> String {
-    if s.chars()
-        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
-        && !s.starts_with(char::is_numeric)
-    {
-        s.to_string()
-    } else {
-        format!("\"{}\"", s.replace('"', "\"\""))
-    }
 }
 
 /// Execute sequence upgrade
@@ -269,51 +260,7 @@ pub fn create_upgrade_action(
 
 /// Print fix result in human-readable format
 pub fn print_human(result: &FixResult, quiet: bool) {
-    if quiet {
-        if !result.success {
-            if let Some(err) = &result.error {
-                eprintln!("Error: {}", err);
-            }
-        }
-        return;
-    }
-
-    if result.executed {
-        if result.success {
-            println!("SUCCESS: {}", result.summary);
-        } else {
-            println!("FAILED: {}", result.summary);
-            if let Some(err) = &result.error {
-                println!("Error: {}", err);
-            }
-        }
-    } else {
-        println!("DRY RUN: {}", result.summary);
-        println!();
-        println!("SQL to execute:");
-        for sql in &result.sql {
-            println!("  {}", sql);
-        }
-        println!();
-        println!("To execute, add --yes flag.");
-    }
-
-    // Print verification results if present
-    if let Some(verification) = &result.verification {
-        println!();
-        if verification.passed {
-            println!("VERIFICATION: PASSED");
-        } else {
-            println!("VERIFICATION: FAILED");
-        }
-        for step in &verification.steps {
-            let status = if step.passed { "✓" } else { "✗" };
-            println!("  {} {}", status, step.description);
-            if let Some(err) = &step.error {
-                println!("    Error: {}", err);
-            }
-        }
-    }
+    print_fix_result(result, quiet, None);
 }
 
 /// Print fix result as JSON
@@ -367,25 +314,12 @@ mod tests {
     #[test]
     fn test_generate_upgrade_sql() {
         let sql = generate_upgrade_sql("public", "order_seq", SequenceType::BigInt);
-        assert_eq!(sql, "ALTER SEQUENCE public.order_seq AS bigint;");
+        assert_eq!(sql, "ALTER SEQUENCE \"public\".\"order_seq\" AS bigint;");
     }
 
     #[test]
-    fn test_generate_upgrade_sql_quoted() {
+    fn test_generate_upgrade_sql_special_chars() {
         let sql = generate_upgrade_sql("My Schema", "Order-Seq", SequenceType::BigInt);
         assert_eq!(sql, "ALTER SEQUENCE \"My Schema\".\"Order-Seq\" AS bigint;");
-    }
-
-    #[test]
-    fn test_quote_ident_simple() {
-        assert_eq!(quote_ident("users"), "users");
-        assert_eq!(quote_ident("user_id"), "user_id");
-    }
-
-    #[test]
-    fn test_quote_ident_needs_quotes() {
-        assert_eq!(quote_ident("User"), "\"User\"");
-        assert_eq!(quote_ident("my-table"), "\"my-table\"");
-        assert_eq!(quote_ident("123table"), "\"123table\"");
     }
 }

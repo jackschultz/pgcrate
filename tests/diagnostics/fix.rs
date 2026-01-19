@@ -392,3 +392,140 @@ fn test_triage_include_fixes_json() {
         json
     );
 }
+
+// ============================================================================
+// Execution tests (actually run fixes)
+// ============================================================================
+
+#[test]
+fn test_fix_sequence_executes_upgrade() {
+    skip_if_no_db!();
+    let db = TestDatabase::new();
+    let project = TestProject::from_fixture("with_migrations", &db);
+
+    project.run_pgcrate_ok(&["migrate", "up"]);
+
+    // Create an integer sequence
+    db.run_sql_ok("CREATE SEQUENCE exec_test_seq AS integer;");
+
+    // Verify it's integer before fix
+    let before =
+        db.run_sql_ok("SELECT data_type FROM pg_sequences WHERE sequencename = 'exec_test_seq';");
+    let before_type = String::from_utf8_lossy(&before.stdout);
+    assert!(
+        before_type.contains("integer"),
+        "Sequence should be integer before fix: {}",
+        before_type
+    );
+
+    // Execute the upgrade with --yes
+    let output = project.run_pgcrate(&[
+        "--read-write",
+        "--primary",
+        "fix",
+        "sequence",
+        "public.exec_test_seq",
+        "--upgrade-to",
+        "bigint",
+        "--yes",
+    ]);
+
+    assert!(
+        output.status.success(),
+        "Fix should succeed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let out = stdout(&output);
+    assert!(out.contains("SUCCESS"), "Should indicate success: {}", out);
+
+    // Verify it's now bigint
+    let after =
+        db.run_sql_ok("SELECT data_type FROM pg_sequences WHERE sequencename = 'exec_test_seq';");
+    let after_type = String::from_utf8_lossy(&after.stdout);
+    assert!(
+        after_type.contains("bigint"),
+        "Sequence should be bigint after fix: {}",
+        after_type
+    );
+}
+
+// ============================================================================
+// Special identifier tests
+// ============================================================================
+
+#[test]
+fn test_fix_sequence_with_reserved_word_schema() {
+    skip_if_no_db!();
+    let db = TestDatabase::new();
+    let project = TestProject::from_fixture("with_migrations", &db);
+
+    project.run_pgcrate_ok(&["migrate", "up"]);
+
+    // Create a schema named "user" (reserved word)
+    db.run_sql_ok("CREATE SCHEMA \"user\";");
+    db.run_sql_ok("CREATE SEQUENCE \"user\".test_seq AS integer;");
+
+    // Dry run should work with quoted identifier
+    let output = project.run_pgcrate(&[
+        "--read-write",
+        "--primary",
+        "fix",
+        "sequence",
+        "user.test_seq",
+        "--upgrade-to",
+        "bigint",
+        "--dry-run",
+    ]);
+
+    assert!(
+        output.status.success(),
+        "Should handle reserved word schema: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let out = stdout(&output);
+    // The SQL should have properly quoted the "user" schema
+    assert!(
+        out.contains("\"user\""),
+        "Should quote reserved word 'user': {}",
+        out
+    );
+}
+
+#[test]
+fn test_fix_vacuum_with_special_table_name() {
+    skip_if_no_db!();
+    let db = TestDatabase::new();
+    let project = TestProject::from_fixture("with_migrations", &db);
+
+    project.run_pgcrate_ok(&["migrate", "up"]);
+
+    // Create a table with a name that needs quoting
+    db.run_sql_ok("CREATE TABLE \"My-Table\" (id serial PRIMARY KEY);");
+    db.run_sql_ok("INSERT INTO \"My-Table\" DEFAULT VALUES;");
+
+    // Dry run should work with special characters
+    let output = project.run_pgcrate(&[
+        "--read-write",
+        "--primary",
+        "fix",
+        "vacuum",
+        "public.My-Table",
+        "--dry-run",
+    ]);
+
+    assert!(
+        output.status.success(),
+        "Should handle special table name: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let out = stdout(&output);
+    // The SQL should have properly quoted the table name
+    assert!(
+        out.contains("\"My-Table\""),
+        "Should quote special table name: {}",
+        out
+    );
+}

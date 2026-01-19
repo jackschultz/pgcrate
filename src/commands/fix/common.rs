@@ -242,7 +242,10 @@ fn check_gates(
     } else {
         GateCheckResult {
             passed: false,
-            blocked_reason: Some(format!("Missing required flags: {}", missing_flags.join(", "))),
+            blocked_reason: Some(format!(
+                "Missing required flags: {}",
+                missing_flags.join(", ")
+            )),
         }
     }
 }
@@ -284,6 +287,60 @@ pub struct VerifyStepResult {
     pub actual: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+/// Print fix result in human-readable format.
+///
+/// The optional `dry_run_note` is printed after the SQL preview for dry runs.
+pub fn print_fix_result(result: &FixResult, quiet: bool, dry_run_note: Option<&str>) {
+    if quiet {
+        if !result.success {
+            if let Some(err) = &result.error {
+                eprintln!("Error: {}", err);
+            }
+        }
+        return;
+    }
+
+    if result.executed {
+        if result.success {
+            println!("SUCCESS: {}", result.summary);
+        } else {
+            println!("FAILED: {}", result.summary);
+            if let Some(err) = &result.error {
+                println!("Error: {}", err);
+            }
+        }
+    } else {
+        println!("DRY RUN: {}", result.summary);
+        println!();
+        println!("SQL to execute:");
+        for sql in &result.sql {
+            println!("  {}", sql);
+        }
+        println!();
+        if let Some(note) = dry_run_note {
+            println!("{}", note);
+        }
+        println!("To execute, add --yes flag.");
+    }
+
+    // Print verification results if present
+    if let Some(verification) = &result.verification {
+        println!();
+        if verification.passed {
+            println!("VERIFICATION: PASSED");
+        } else {
+            println!("VERIFICATION: FAILED");
+        }
+        for step in &verification.steps {
+            let status = if step.passed { "✓" } else { "✗" };
+            println!("  {} {}", status, step.description);
+            if let Some(err) = &step.error {
+                println!("    Error: {}", err);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

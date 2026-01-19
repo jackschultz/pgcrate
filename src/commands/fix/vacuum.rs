@@ -11,7 +11,10 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 use tokio_postgres::Client;
 
-use super::common::{ActionGates, ActionType, FixResult, Risk, StructuredAction, VerifyStep};
+use super::common::{
+    print_fix_result, ActionGates, ActionType, FixResult, Risk, StructuredAction, VerifyStep,
+};
+use crate::sql::quote_ident;
 
 /// VACUUM options
 #[derive(Debug, Clone, Default)]
@@ -132,18 +135,6 @@ pub fn generate_vacuum_sql(schema: &str, table: &str, options: &VacuumOptions) -
     }
 }
 
-/// Simple identifier quoting
-fn quote_ident(s: &str) -> String {
-    if s.chars()
-        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
-        && !s.starts_with(char::is_numeric)
-    {
-        s.to_string()
-    } else {
-        format!("\"{}\"", s.replace('"', "\"\""))
-    }
-}
-
 /// Execute vacuum operation
 pub async fn execute_vacuum(
     client: &Client,
@@ -212,7 +203,7 @@ pub async fn execute_vacuum(
 /// Get verification steps for vacuum.
 /// Note: Vacuum verification is limited - we check overall status improved,
 /// not the specific table, since JSONPath comparison operators are limited.
-pub fn get_verify_steps(_schema: &str, _table: &str, _current_dead_pct: f64) -> Vec<VerifyStep> {
+pub fn get_verify_steps() -> Vec<VerifyStep> {
     vec![VerifyStep {
         description: "Verify vacuum status is not critical".to_string(),
         command: "pgcrate vacuum --json".to_string(),
@@ -265,7 +256,7 @@ pub fn create_vacuum_action(
         args.push("--analyze".to_string());
     }
 
-    let verify_steps = get_verify_steps(&evidence.schema, &evidence.table, evidence.dead_pct);
+    let verify_steps = get_verify_steps();
 
     let mode_desc = if options.full {
         "VACUUM FULL (requires ACCESS EXCLUSIVE lock)"
@@ -295,51 +286,7 @@ pub fn create_vacuum_action(
 
 /// Print fix result in human-readable format
 pub fn print_human(result: &FixResult, quiet: bool) {
-    if quiet {
-        if !result.success {
-            if let Some(err) = &result.error {
-                eprintln!("Error: {}", err);
-            }
-        }
-        return;
-    }
-
-    if result.executed {
-        if result.success {
-            println!("SUCCESS: {}", result.summary);
-        } else {
-            println!("FAILED: {}", result.summary);
-            if let Some(err) = &result.error {
-                println!("Error: {}", err);
-            }
-        }
-    } else {
-        println!("DRY RUN: {}", result.summary);
-        println!();
-        println!("SQL to execute:");
-        for sql in &result.sql {
-            println!("  {}", sql);
-        }
-        println!();
-        println!("To execute, add --yes flag.");
-    }
-
-    // Print verification results if present
-    if let Some(verification) = &result.verification {
-        println!();
-        if verification.passed {
-            println!("VERIFICATION: PASSED");
-        } else {
-            println!("VERIFICATION: FAILED");
-        }
-        for step in &verification.steps {
-            let status = if step.passed { "✓" } else { "✗" };
-            println!("  {} {}", status, step.description);
-            if let Some(err) = &step.error {
-                println!("    Error: {}", err);
-            }
-        }
-    }
+    print_fix_result(result, quiet, None);
 }
 
 /// Print fix result as JSON
@@ -418,7 +365,7 @@ mod tests {
     fn test_generate_vacuum_sql_regular() {
         let opts = VacuumOptions::default();
         let sql = generate_vacuum_sql("public", "orders", &opts);
-        assert_eq!(sql, "VACUUM public.orders;");
+        assert_eq!(sql, "VACUUM \"public\".\"orders\";");
     }
 
     #[test]
@@ -428,7 +375,7 @@ mod tests {
             ..Default::default()
         };
         let sql = generate_vacuum_sql("public", "orders", &opts);
-        assert_eq!(sql, "VACUUM (FULL) public.orders;");
+        assert_eq!(sql, "VACUUM (FULL) \"public\".\"orders\";");
     }
 
     #[test]
@@ -438,6 +385,6 @@ mod tests {
             ..Default::default()
         };
         let sql = generate_vacuum_sql("public", "orders", &opts);
-        assert_eq!(sql, "VACUUM (ANALYZE) public.orders;");
+        assert_eq!(sql, "VACUUM (ANALYZE) \"public\".\"orders\";");
     }
 }

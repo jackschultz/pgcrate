@@ -8,7 +8,10 @@ use anyhow::{bail, Context, Result};
 use serde::Serialize;
 use tokio_postgres::Client;
 
-use super::common::{ActionGates, ActionType, FixResult, Risk, StructuredAction, VerifyStep};
+use super::common::{
+    print_fix_result, ActionGates, ActionType, FixResult, Risk, StructuredAction, VerifyStep,
+};
+use crate::sql::quote_ident;
 
 /// Evidence for index drop action
 #[derive(Debug, Clone, Serialize)]
@@ -159,18 +162,6 @@ pub fn generate_drop_sql(schema: &str, name: &str, concurrent: bool) -> String {
     }
 }
 
-/// Simple identifier quoting
-fn quote_ident(s: &str) -> String {
-    if s.chars()
-        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
-        && !s.starts_with(char::is_numeric)
-    {
-        s.to_string()
-    } else {
-        format!("\"{}\"", s.replace('"', "\"\""))
-    }
-}
-
 /// Execute index drop
 pub async fn execute_drop(
     client: &Client,
@@ -234,14 +225,14 @@ pub async fn execute_drop(
 }
 
 /// Get verification steps for index drop.
-pub fn get_verify_steps(_schema: &str, index_name: &str) -> Vec<VerifyStep> {
+pub fn get_verify_steps(index_name: &str) -> Vec<VerifyStep> {
     vec![VerifyStep {
-        description: format!("Verify index {} no longer exists in unused list", index_name),
-        command: "pgcrate indexes --json".to_string(),
-        expected: format!(
-            "$.data.unused[?(@.index=='{}')].length() == 0",
+        description: format!(
+            "Verify index {} no longer exists in unused list",
             index_name
         ),
+        command: "pgcrate indexes --json".to_string(),
+        expected: format!("$.data.unused[?(@.index=='{}')].length() == 0", index_name),
     }]
 }
 
@@ -257,7 +248,7 @@ pub fn create_drop_action(
     let safety = check_safety(evidence);
     let sql = generate_drop_sql(&evidence.schema, &evidence.index_name, true);
 
-    let verify_steps = get_verify_steps(&evidence.schema, &evidence.index_name);
+    let verify_steps = get_verify_steps(&evidence.index_name);
 
     let builder = StructuredAction::builder(action_id, ActionType::Fix)
         .command("pgcrate")
@@ -291,52 +282,11 @@ pub fn create_drop_action(
 
 /// Print fix result in human-readable format
 pub fn print_human(result: &FixResult, quiet: bool) {
-    if quiet {
-        if !result.success {
-            if let Some(err) = &result.error {
-                eprintln!("Error: {}", err);
-            }
-        }
-        return;
-    }
-
-    if result.executed {
-        if result.success {
-            println!("SUCCESS: {}", result.summary);
-        } else {
-            println!("FAILED: {}", result.summary);
-            if let Some(err) = &result.error {
-                println!("Error: {}", err);
-            }
-        }
-    } else {
-        println!("DRY RUN: {}", result.summary);
-        println!();
-        println!("SQL to execute:");
-        for sql in &result.sql {
-            println!("  {}", sql);
-        }
-        println!();
-        println!("Note: Uses DROP INDEX CONCURRENTLY to avoid blocking.");
-        println!("To execute, add --yes flag.");
-    }
-
-    // Print verification results if present
-    if let Some(verification) = &result.verification {
-        println!();
-        if verification.passed {
-            println!("VERIFICATION: PASSED");
-        } else {
-            println!("VERIFICATION: FAILED");
-        }
-        for step in &verification.steps {
-            let status = if step.passed { "✓" } else { "✗" };
-            println!("  {} {}", status, step.description);
-            if let Some(err) = &step.error {
-                println!("    Error: {}", err);
-            }
-        }
-    }
+    print_fix_result(
+        result,
+        quiet,
+        Some("Note: Uses DROP INDEX CONCURRENTLY to avoid blocking."),
+    );
 }
 
 /// Print fix result as JSON
@@ -420,12 +370,12 @@ mod tests {
     #[test]
     fn test_generate_drop_sql_concurrent() {
         let sql = generate_drop_sql("public", "idx_test", true);
-        assert_eq!(sql, "DROP INDEX CONCURRENTLY public.idx_test;");
+        assert_eq!(sql, "DROP INDEX CONCURRENTLY \"public\".\"idx_test\";");
     }
 
     #[test]
     fn test_generate_drop_sql_blocking() {
         let sql = generate_drop_sql("public", "idx_test", false);
-        assert_eq!(sql, "DROP INDEX public.idx_test;");
+        assert_eq!(sql, "DROP INDEX \"public\".\"idx_test\";");
     }
 }
