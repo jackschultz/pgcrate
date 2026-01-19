@@ -283,10 +283,18 @@ pub fn print_json(
     result: &XidResult,
     timeouts: Option<crate::diagnostic::EffectiveTimeouts>,
 ) -> Result<()> {
-    use crate::output::{schema, DiagnosticOutput};
+    use crate::output::{schema, DiagnosticOutput, Severity};
+
+    // Convert XidStatus to Severity
+    let severity = match result.overall_status {
+        XidStatus::Healthy => Severity::Healthy,
+        XidStatus::Warning => Severity::Warning,
+        XidStatus::Critical => Severity::Critical,
+    };
+
     let output = match timeouts {
-        Some(t) => DiagnosticOutput::with_timeouts(schema::XID, result, t),
-        None => DiagnosticOutput::new(schema::XID, result),
+        Some(t) => DiagnosticOutput::with_timeouts(schema::XID, result, severity, t),
+        None => DiagnosticOutput::new(schema::XID, result, severity),
     };
     output.print()?;
     Ok(())

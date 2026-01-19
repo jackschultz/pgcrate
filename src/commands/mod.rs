@@ -4,6 +4,8 @@
 
 mod anonymize;
 mod bootstrap;
+pub mod capabilities;
+pub mod context;
 mod db;
 mod doctor;
 mod extension;

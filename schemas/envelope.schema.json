@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pgcrate.diagnostics.envelope",
+  "title": "pgcrate diagnostic envelope",
+  "description": "Common envelope structure for all diagnostic command outputs (v2.0.0)",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["ok", "schema_id", "schema_version", "tool_version", "generated_at", "severity", "data"],
+  "properties": {
+    "ok": {
+      "type": "boolean",
+      "description": "True if command succeeded, false if errors occurred"
+    },
+    "schema_id": {
+      "type": "string",
+      "pattern": "^pgcrate\\..+$",
+      "description": "Identifier for the schema of this output"
+    },
+    "schema_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "Semver version of the schema"
+    },
+    "tool_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+",
+      "description": "Version of pgcrate that generated this output"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when this output was generated"
+    },
+    "severity": {
+      "$ref": "#/$defs/severity",
+      "description": "Overall severity of findings"
+    },
+    "partial": {
+      "type": "boolean",
+      "description": "True if some checks were skipped (output is incomplete)"
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/reasonInfo" },
+      "description": "Non-fatal issues encountered during execution"
+    },
+    "errors": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/reasonInfo" },
+      "description": "Fatal issues that prevented full execution"
+    },
+    "timeouts": {
+      "$ref": "#/$defs/timeouts",
+      "description": "Effective timeout configuration used"
+    },
+    "data": {
+      "type": "object",
+      "description": "Command-specific data payload"
+    }
+  },
+  "$defs": {
+    "severity": {
+      "type": "string",
+      "enum": ["healthy", "warning", "critical", "error"],
+      "description": "Overall severity: healthy (no issues), warning (attention needed), critical (urgent), error (execution failed)"
+    },
+    "reasonCode": {
+      "type": "string",
+      "enum": [
+        "connection_timeout",
+        "statement_timeout",
+        "lock_timeout",
+        "connection_failed",
+        "query_cancelled",
+        "server_shutdown",
+        "too_many_connections",
+        "out_of_memory",
+        "disk_full",
+        "internal_error",
+        "primary_requires_ack",
+        "requires_read_write",
+        "dangerous_operation",
+        "replica_not_allowed",
+        "primary_not_allowed",
+        "feature_disabled",
+        "missing_extension",
+        "missing_privilege",
+        "missing_role",
+        "missing_table",
+        "missing_schema",
+        "missing_function",
+        "unsupported_version",
+        "not_applicable",
+        "missing_config",
+        "requires_superuser",
+        "requires_replication"
+      ],
+      "description": "Stable reason code for automation"
+    },
+    "reasonInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "$ref": "#/$defs/reasonCode" },
+        "message": {
+          "type": "string",
+          "description": "Human-readable message"
+        },
+        "details": {
+          "type": "object",
+          "description": "Optional structured details"
+        }
+      }
+    },
+    "timeouts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["connect_ms", "statement_ms", "lock_ms"],
+      "properties": {
+        "connect_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Connection timeout in milliseconds"
+        },
+        "statement_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Statement timeout in milliseconds"
+        },
+        "lock_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Lock timeout in milliseconds"
+        }
+      }
+    }
+  }
+}

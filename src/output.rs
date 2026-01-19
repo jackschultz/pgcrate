@@ -231,19 +231,81 @@ pub struct DescribeResponse {
 
 /// Schema version for diagnostic JSON outputs.
 /// Follows semver: breaking=major, additive=minor, bugfix=patch.
-pub const DIAGNOSTIC_SCHEMA_VERSION: &str = "1.0.0";
+/// v2.0.0: Breaking change - data field is no longer flattened, added severity/warnings/errors.
+pub const DIAGNOSTIC_SCHEMA_VERSION: &str = "2.0.0";
+
+/// Tool version from Cargo.toml.
+pub const TOOL_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Overall severity level for diagnostic output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Severity {
+    /// All checks healthy, no issues found
+    Healthy,
+    /// Some issues found that warrant attention
+    Warning,
+    /// Critical issues found that need immediate attention
+    Critical,
+    /// Error during diagnostic execution (not a finding, but a failure)
+    Error,
+}
+
+impl Severity {
+    /// Combine two severities, returning the worst.
+    pub fn worst(self, other: Self) -> Self {
+        use Severity::*;
+        match (self, other) {
+            (Error, _) | (_, Error) => Error,
+            (Critical, _) | (_, Critical) => Critical,
+            (Warning, _) | (_, Warning) => Warning,
+            (Healthy, Healthy) => Healthy,
+        }
+    }
+
+    /// Convert from triage CheckStatus.
+    pub fn from_check_status(status: &crate::commands::triage::CheckStatus) -> Self {
+        match status {
+            crate::commands::triage::CheckStatus::Healthy => Severity::Healthy,
+            crate::commands::triage::CheckStatus::Warning => Severity::Warning,
+            crate::commands::triage::CheckStatus::Critical => Severity::Critical,
+        }
+    }
+}
 
 /// Wrapper for diagnostic command JSON output.
 /// Includes schema metadata for stable automation and versioning.
+///
+/// v2.0.0 changes:
+/// - Added `tool_version` and `generated_at` for traceability
+/// - Added `severity` to indicate overall health
+/// - Added `partial` flag when some checks were skipped
+/// - Added `warnings` and `errors` arrays with structured reason codes
+/// - Removed `#[serde(flatten)]` from `data` - data is now a nested field
 #[derive(Debug, Serialize)]
 pub struct DiagnosticOutput<T: Serialize> {
     pub ok: bool,
     pub schema_id: &'static str,
     pub schema_version: &'static str,
+    /// Tool version (pgcrate version that generated this output)
+    pub tool_version: &'static str,
+    /// ISO 8601 timestamp when this output was generated
+    pub generated_at: String,
+    /// Overall severity: healthy, warning, critical, or error
+    pub severity: Severity,
+    /// Whether this output is partial (some checks were skipped)
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub partial: bool,
+    /// Warnings encountered during execution (non-fatal issues)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<crate::reason_codes::ReasonInfo>,
+    /// Errors encountered during execution (fatal issues that prevented checks)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<crate::reason_codes::ReasonInfo>,
     /// Effective timeout configuration used for this diagnostic
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeouts: Option<TimeoutsJson>,
-    #[serde(flatten)]
+    /// Command-specific data payload
     pub data: T,
 }
 
@@ -257,11 +319,17 @@ pub struct TimeoutsJson {
 
 impl<T: Serialize> DiagnosticOutput<T> {
     /// Create a new diagnostic output with the given schema ID and data.
-    pub fn new(schema_id: &'static str, data: T) -> Self {
+    pub fn new(schema_id: &'static str, data: T, severity: Severity) -> Self {
         Self {
             ok: true,
             schema_id,
             schema_version: DIAGNOSTIC_SCHEMA_VERSION,
+            tool_version: TOOL_VERSION,
+            generated_at: chrono::Utc::now().to_rfc3339(),
+            severity,
+            partial: false,
+            warnings: Vec::new(),
+            errors: Vec::new(),
             timeouts: None,
             data,
         }
@@ -271,12 +339,19 @@ impl<T: Serialize> DiagnosticOutput<T> {
     pub fn with_timeouts(
         schema_id: &'static str,
         data: T,
+        severity: Severity,
         timeouts: crate::diagnostic::EffectiveTimeouts,
     ) -> Self {
         Self {
             ok: true,
             schema_id,
             schema_version: DIAGNOSTIC_SCHEMA_VERSION,
+            tool_version: TOOL_VERSION,
+            generated_at: chrono::Utc::now().to_rfc3339(),
+            severity,
+            partial: false,
+            warnings: Vec::new(),
+            errors: Vec::new(),
             timeouts: Some(TimeoutsJson {
                 connect_ms: timeouts.connect_timeout_ms,
                 statement_ms: timeouts.statement_timeout_ms,
@@ -284,6 +359,25 @@ impl<T: Serialize> DiagnosticOutput<T> {
             }),
             data,
         }
+    }
+
+    /// Mark this output as partial (some checks were skipped).
+    pub fn with_partial(mut self, partial: bool) -> Self {
+        self.partial = partial;
+        self
+    }
+
+    /// Add warnings to this output.
+    pub fn with_warnings(mut self, warnings: Vec<crate::reason_codes::ReasonInfo>) -> Self {
+        self.warnings = warnings;
+        self
+    }
+
+    /// Add errors to this output.
+    pub fn with_errors(mut self, errors: Vec<crate::reason_codes::ReasonInfo>) -> Self {
+        self.ok = errors.is_empty();
+        self.errors = errors;
+        self
     }
 
     /// Print this output as JSON to stdout.
@@ -301,6 +395,8 @@ pub mod schema {
     pub const XID: &str = "pgcrate.diagnostics.xid";
     pub const SEQUENCES: &str = "pgcrate.diagnostics.sequences";
     pub const INDEXES: &str = "pgcrate.diagnostics.indexes";
+    pub const CONTEXT: &str = "pgcrate.diagnostics.context";
+    pub const CAPABILITIES: &str = "pgcrate.diagnostics.capabilities";
 }
 
 /// Diagnostic-specific error response.

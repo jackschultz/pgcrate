@@ -257,10 +257,18 @@ pub fn print_json(
     result: &SequencesResult,
     timeouts: Option<crate::diagnostic::EffectiveTimeouts>,
 ) -> Result<()> {
-    use crate::output::{schema, DiagnosticOutput};
+    use crate::output::{schema, DiagnosticOutput, Severity};
+
+    // Convert SeqStatus to Severity
+    let severity = match result.overall_status {
+        SeqStatus::Healthy => Severity::Healthy,
+        SeqStatus::Warning => Severity::Warning,
+        SeqStatus::Critical => Severity::Critical,
+    };
+
     let output = match timeouts {
-        Some(t) => DiagnosticOutput::with_timeouts(schema::SEQUENCES, result, t),
-        None => DiagnosticOutput::new(schema::SEQUENCES, result),
+        Some(t) => DiagnosticOutput::with_timeouts(schema::SEQUENCES, result, severity, t),
+        None => DiagnosticOutput::new(schema::SEQUENCES, result, severity),
     };
     output.print()?;
     Ok(())

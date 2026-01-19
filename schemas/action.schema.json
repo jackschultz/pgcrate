@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pgcrate.diagnostics.action",
+  "title": "pgcrate action schema",
+  "description": "Schema for structured actions in diagnostic outputs (used with --include-fixes)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "action_id",
+    "action_type",
+    "command",
+    "args",
+    "command_string",
+    "description",
+    "available",
+    "mutates",
+    "risk",
+    "gates"
+  ],
+  "properties": {
+    "action_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+",
+      "description": "Unique action identifier"
+    },
+    "action_type": {
+      "$ref": "#/$defs/actionType"
+    },
+    "command": {
+      "type": "string",
+      "description": "Command to run (e.g., pgcrate)"
+    },
+    "args": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Command arguments"
+    },
+    "command_string": {
+      "type": "string",
+      "description": "Full command string for display"
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description of what this action does"
+    },
+    "requires_capability_id": {
+      "type": "string",
+      "description": "Which capability is required"
+    },
+    "available": {
+      "type": "boolean",
+      "description": "Whether this action is available in the current context"
+    },
+    "unavailable_reason": {
+      "type": "string",
+      "description": "Reason why action is unavailable"
+    },
+    "mutates": {
+      "type": "boolean",
+      "description": "Whether this action mutates data"
+    },
+    "sql_preview": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "SQL statements that would be executed"
+    },
+    "lock_risk": {
+      "$ref": "#/$defs/lockRisk"
+    },
+    "risk": {
+      "type": "string",
+      "enum": ["none", "low", "medium", "high", "extreme"],
+      "description": "Overall risk level"
+    },
+    "evidence": {
+      "type": "object",
+      "description": "Evidence that led to this recommendation"
+    },
+    "gates": {
+      "$ref": "#/$defs/actionGates"
+    },
+    "verify": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/verifyStep" },
+      "description": "Steps to verify success after execution"
+    }
+  },
+  "$defs": {
+    "actionType": {
+      "type": "string",
+      "enum": ["investigate", "fix", "monitor"],
+      "description": "Type of action"
+    },
+    "lockRisk": {
+      "type": "string",
+      "enum": ["none", "low", "medium", "high", "extreme"],
+      "description": "Risk level for lock acquisition"
+    },
+    "actionGates": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requires_write": {
+          "type": "boolean",
+          "description": "Requires --read-write mode"
+        },
+        "requires_primary": {
+          "type": "boolean",
+          "description": "Requires --primary flag"
+        },
+        "requires_confirmation": {
+          "type": "boolean",
+          "description": "Requires --yes flag for confirmation"
+        },
+        "requires_capability": {
+          "type": "string",
+          "description": "Required capability ID"
+        },
+        "min_pg_version": {
+          "type": "integer",
+          "description": "Minimum PostgreSQL version required"
+        }
+      }
+    },
+    "verifyStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["description", "command", "expected"],
+      "properties": {
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of what to verify"
+        },
+        "command": {
+          "type": "string",
+          "description": "Command to run for verification"
+        },
+        "expected": {
+          "type": "string",
+          "description": "Expected outcome"
+        }
+      }
+    }
+  }
+}

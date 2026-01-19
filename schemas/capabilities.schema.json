@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pgcrate.diagnostics.capabilities",
+  "title": "pgcrate capabilities output",
+  "description": "Available capabilities based on privileges and connection mode",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "schema_id", "schema_version", "tool_version", "generated_at", "severity", "data"],
+  "properties": {
+    "ok": { "type": "boolean" },
+    "schema_id": { "type": "string", "const": "pgcrate.diagnostics.capabilities" },
+    "schema_version": { "type": "string" },
+    "tool_version": { "type": "string" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "severity": { "type": "string", "enum": ["healthy", "warning", "critical", "error"] },
+    "partial": { "type": "boolean" },
+    "warnings": { "type": "array" },
+    "errors": { "type": "array" },
+    "timeouts": { "type": "object" },
+    "data": {
+      "$ref": "#/$defs/capabilitiesData"
+    }
+  },
+  "$defs": {
+    "capabilitiesData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capabilities", "summary"],
+      "properties": {
+        "capabilities": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/capabilityInfo" },
+          "description": "List of all capabilities and their status"
+        },
+        "summary": { "$ref": "#/$defs/capabilitySummary" }
+      }
+    },
+    "capabilityInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "description", "status", "requirements"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z]+\\.[a-z_]+$",
+          "description": "Capability identifier (e.g., diagnostics.triage)"
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable name"
+        },
+        "description": {
+          "type": "string",
+          "description": "Brief description of the capability"
+        },
+        "status": {
+          "$ref": "#/$defs/capabilityStatus"
+        },
+        "reasons": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/reasonInfo" },
+          "description": "Reasons for degraded/unavailable status"
+        },
+        "requirements": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/requirement" },
+          "description": "Requirements and their status"
+        },
+        "limitations": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Limitations when degraded"
+        }
+      }
+    },
+    "capabilityStatus": {
+      "type": "string",
+      "enum": ["available", "degraded", "unavailable", "unknown"],
+      "description": "Availability status of the capability"
+    },
+    "requirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["what", "met"],
+      "properties": {
+        "what": {
+          "type": "string",
+          "description": "What is required"
+        },
+        "met": {
+          "type": "boolean",
+          "description": "Whether the requirement is met"
+        }
+      }
+    },
+    "reasonInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "Reason code"
+        },
+        "message": {
+          "type": "string",
+          "description": "Human-readable message"
+        },
+        "details": {
+          "type": "object",
+          "description": "Optional structured details"
+        }
+      }
+    },
+    "capabilitySummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["available", "degraded", "unavailable", "unknown"],
+      "properties": {
+        "available": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Count of available capabilities"
+        },
+        "degraded": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Count of degraded capabilities"
+        },
+        "unavailable": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Count of unavailable capabilities"
+        },
+        "unknown": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Count of capabilities with unknown status"
+        }
+      }
+    }
+  }
+}

@@ -816,17 +816,124 @@ pub fn print_human(results: &TriageResults, quiet: bool) {
     }
 }
 
+/// Triage results with optional actions
+#[derive(Debug, Serialize)]
+pub struct TriageResultsWithActions {
+    #[serde(flatten)]
+    pub results: TriageResults,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<crate::actions::Action>,
+}
+
+/// Generate actions based on triage results
+fn generate_actions(results: &TriageResults, read_only: bool) -> Vec<crate::actions::Action> {
+    use crate::actions;
+    let mut all_actions = vec![];
+
+    for check in &results.checks {
+        match check.name {
+            "blocking_locks" if check.status != CheckStatus::Healthy => {
+                // Extract counts from summary if possible
+                // For now, use default values
+                all_actions.extend(actions::blocking_locks_actions(1, 0));
+            }
+            "long_transactions" if check.status != CheckStatus::Healthy => {
+                all_actions.extend(actions::long_transaction_actions(1, 0));
+            }
+            "sequences" if check.status != CheckStatus::Healthy => {
+                // Parse schema.name from summary if available
+                // For now generate a generic investigation action
+                all_actions.push(
+                    crate::actions::Action::investigate(
+                        "investigate-sequences",
+                        "Show sequences with exhaustion risk",
+                        vec!["sequences".to_string()],
+                    ),
+                );
+            }
+            "xid_age" if check.status != CheckStatus::Healthy => {
+                all_actions.extend(actions::xid_age_actions("unknown", 0));
+            }
+            "connections" if check.status != CheckStatus::Healthy => {
+                all_actions.extend(actions::connection_actions(0, 0, 0));
+            }
+            _ => {}
+        }
+    }
+
+    // Mark actions as unavailable if we're in read-only mode
+    if read_only {
+        for action in &mut all_actions {
+            if action.mutates && action.available {
+                action.available = false;
+                action.unavailable_reason = Some("Requires --read-write mode".to_string());
+            }
+        }
+    }
+
+    all_actions
+}
+
 /// Print triage results as JSON with schema versioning.
 pub fn print_json(
     results: &TriageResults,
     timeouts: Option<crate::diagnostic::EffectiveTimeouts>,
+    include_fixes: bool,
+    read_only: bool,
 ) -> Result<()> {
-    use crate::output::{schema, DiagnosticOutput};
-    let output = match timeouts {
-        Some(t) => DiagnosticOutput::with_timeouts(schema::TRIAGE, results, t),
-        None => DiagnosticOutput::new(schema::TRIAGE, results),
-    };
-    output.print()?;
+    use crate::output::{schema, DiagnosticOutput, Severity};
+    use crate::reason_codes::{ReasonCode, ReasonInfo};
+
+    // Derive severity from overall status
+    let severity = Severity::from_check_status(&results.overall_status);
+
+    // Convert skipped checks to warnings
+    let warnings: Vec<ReasonInfo> = results
+        .skipped_checks
+        .iter()
+        .map(|skip| {
+            let code = match skip.reason_code {
+                SkipReason::InsufficientPrivilege => ReasonCode::MissingPrivilege,
+                SkipReason::MissingExtension => ReasonCode::MissingExtension,
+                SkipReason::UnsupportedPostgresVersion => ReasonCode::UnsupportedVersion,
+                SkipReason::StatementTimeout => ReasonCode::StatementTimeout,
+                SkipReason::LockTimeout => ReasonCode::LockTimeout,
+                SkipReason::NotApplicable => ReasonCode::NotApplicable,
+                SkipReason::InternalError => ReasonCode::InternalError,
+            };
+            ReasonInfo::new(code, format!("{}: {}", skip.check_id, skip.reason_human))
+        })
+        .collect();
+
+    let partial = !results.skipped_checks.is_empty();
+
+    if include_fixes {
+        // Generate actions and include in output
+        let actions = generate_actions(results, read_only);
+        let results_with_actions = TriageResultsWithActions {
+            results: TriageResults {
+                checks: results.checks.clone(),
+                skipped_checks: results.skipped_checks.clone(),
+                overall_status: results.overall_status,
+            },
+            actions,
+        };
+
+        let output = match timeouts {
+            Some(t) => DiagnosticOutput::with_timeouts(schema::TRIAGE, &results_with_actions, severity, t),
+            None => DiagnosticOutput::new(schema::TRIAGE, &results_with_actions, severity),
+        };
+        let output = output.with_partial(partial).with_warnings(warnings);
+        output.print()?;
+    } else {
+        let output = match timeouts {
+            Some(t) => DiagnosticOutput::with_timeouts(schema::TRIAGE, results, severity, t),
+            None => DiagnosticOutput::new(schema::TRIAGE, results, severity),
+        };
+        let output = output.with_partial(partial).with_warnings(warnings);
+        output.print()?;
+    }
+
     Ok(())
 }
 

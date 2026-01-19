@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use clap::{error::ErrorKind, Args, Parser, Subcommand};
 use std::path::PathBuf;
 
+mod actions;
 mod anonymize;
 mod commands;
 mod config;
@@ -16,6 +17,7 @@ mod introspect;
 mod migrations;
 mod model;
 mod output;
+mod reason_codes;
 mod redact;
 mod seed;
 mod snapshot;
@@ -69,11 +71,13 @@ fn json_supported(command: &Commands) -> bool {
         Commands::Describe { .. } => true,
         Commands::Diff { .. } => true,
         Commands::Doctor { .. } => true,
-        Commands::Triage => true,
+        Commands::Triage { .. } => true,
         Commands::Locks { .. } => true,
         Commands::Xid { .. } => true,
         Commands::Sequences { .. } => true,
         Commands::Indexes { .. } => true,
+        Commands::Context => true,
+        Commands::Capabilities => true,
         Commands::Sql { .. } => true,
         Commands::Snapshot { command } => matches!(
             command,
@@ -282,7 +286,11 @@ enum Commands {
         strict: bool,
     },
     /// Quick database health triage (locks, transactions, XID, sequences, connections)
-    Triage,
+    Triage {
+        /// Include structured actions in JSON output
+        #[arg(long)]
+        include_fixes: bool,
+    },
     /// Inspect blocking locks and long transactions
     Locks {
         /// Show only blocking chains
@@ -331,6 +339,10 @@ enum Commands {
         #[arg(long, default_value = "20")]
         unused_limit: usize,
     },
+    /// Show connection context, server info, extensions, and privileges
+    Context,
+    /// Show available capabilities based on privileges and connection mode
+    Capabilities,
     /// Run arbitrary SQL against the database (alias: query)
     #[command(alias = "query")]
     Sql {
@@ -1123,7 +1135,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 std::process::exit(exit_code);
             }
         }
-        Commands::Triage => {
+        Commands::Triage { include_fixes } => {
             let config =
                 Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
             let conn_result = connection::resolve_and_validate(
@@ -1151,7 +1163,12 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
             let results = commands::triage::run_triage(session.client()).await;
 
             if cli.json {
-                commands::triage::print_json(&results, Some(session.effective_timeouts()))?;
+                commands::triage::print_json(
+                    &results,
+                    Some(session.effective_timeouts()),
+                    include_fixes,
+                    !cli.read_write, // read_only
+                )?;
             } else {
                 commands::triage::print_human(&results, cli.quiet);
             }
@@ -1382,6 +1399,82 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 commands::indexes::print_json(&result, Some(session.effective_timeouts()))?;
             } else {
                 commands::indexes::print_human(&result, cli.verbose);
+            }
+        }
+        Commands::Context => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
+
+            // Use DiagnosticSession with timeout enforcement
+            let timeout_config = parse_timeout_config(&cli)?;
+            let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
+
+            // Set up Ctrl+C handler to cancel queries gracefully
+            setup_ctrlc_handler(session.cancel_token());
+
+            // Show effective timeouts unless quiet
+            if !cli.quiet && !cli.json {
+                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
+            }
+
+            let result = commands::context::run_context(
+                session.client(),
+                &conn_result.url,
+                !cli.read_write, // read_only is the inverse of read_write flag
+                cli.no_redact,
+            )
+            .await?;
+
+            if cli.json {
+                commands::context::print_json(&result, Some(session.effective_timeouts()))?;
+            } else {
+                commands::context::print_human(&result, cli.quiet);
+            }
+        }
+        Commands::Capabilities => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
+
+            // Use DiagnosticSession with timeout enforcement
+            let timeout_config = parse_timeout_config(&cli)?;
+            let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
+
+            // Set up Ctrl+C handler to cancel queries gracefully
+            setup_ctrlc_handler(session.cancel_token());
+
+            // Show effective timeouts unless quiet
+            if !cli.quiet && !cli.json {
+                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
+            }
+
+            let result = commands::capabilities::run_capabilities(
+                session.client(),
+                !cli.read_write, // read_only is the inverse of read_write flag
+            )
+            .await?;
+
+            if cli.json {
+                commands::capabilities::print_json(&result, Some(session.effective_timeouts()))?;
+            } else {
+                commands::capabilities::print_human(&result, cli.quiet);
             }
         }
         Commands::Sql {
@@ -1750,11 +1843,13 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 | Commands::Model { .. }
                 | Commands::Init { .. }
                 | Commands::Doctor { .. }
-                | Commands::Triage
+                | Commands::Triage { .. }
                 | Commands::Locks { .. }
                 | Commands::Xid { .. }
                 | Commands::Sequences { .. }
                 | Commands::Indexes { .. }
+                | Commands::Context
+                | Commands::Capabilities
                 | Commands::Sql { .. }
                 | Commands::Db { .. }
                 | Commands::Snapshot { .. }
