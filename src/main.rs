@@ -16,6 +16,7 @@ mod introspect;
 mod migrations;
 mod model;
 mod output;
+mod reason_codes;
 mod redact;
 mod seed;
 mod snapshot;
@@ -74,6 +75,8 @@ fn json_supported(command: &Commands) -> bool {
         Commands::Xid { .. } => true,
         Commands::Sequences { .. } => true,
         Commands::Indexes { .. } => true,
+        Commands::Context => true,
+        Commands::Capabilities => true,
         Commands::Sql { .. } => true,
         Commands::Snapshot { command } => matches!(
             command,
@@ -331,6 +334,10 @@ enum Commands {
         #[arg(long, default_value = "20")]
         unused_limit: usize,
     },
+    /// Show connection context, server info, extensions, and privileges
+    Context,
+    /// Show available capabilities based on privileges and connection mode
+    Capabilities,
     /// Run arbitrary SQL against the database (alias: query)
     #[command(alias = "query")]
     Sql {
@@ -1204,11 +1211,11 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 eprintln!("pgcrate: WARNING: --no-redact disables credential redaction. Output may contain sensitive data.");
             }
             if let Some(pid) = cancel {
-                commands::locks::cancel_query(&client, pid, execute, should_redact).await?;
+                commands::locks::cancel_query(client, pid, execute, should_redact).await?;
                 return Ok(());
             }
             if let Some(pid) = kill {
-                commands::locks::terminate_connection(&client, pid, execute, should_redact).await?;
+                commands::locks::terminate_connection(client, pid, execute, should_redact).await?;
                 return Ok(());
             }
 
@@ -1224,16 +1231,16 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
             };
 
             if show_blocking {
-                result.blocking_chains = commands::locks::get_blocking_chains(&client).await?;
+                result.blocking_chains = commands::locks::get_blocking_chains(client).await?;
             }
             if show_long_tx {
                 let min_minutes = long_tx.unwrap_or(5);
                 result.long_transactions =
-                    commands::locks::get_long_transactions(&client, min_minutes).await?;
+                    commands::locks::get_long_transactions(client, min_minutes).await?;
             }
             if show_idle {
                 result.idle_in_transaction =
-                    commands::locks::get_idle_in_transaction(&client).await?;
+                    commands::locks::get_idle_in_transaction(client).await?;
             }
 
             // Apply redaction unless explicitly disabled (warning already printed above)
@@ -1296,7 +1303,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
             if cli.json {
                 commands::xid::print_json(&result, Some(session.effective_timeouts()))?;
             } else {
-                commands::xid::print_human(&result, cli.quiet);
+                commands::xid::print_human(&result);
             }
 
             // Exit with appropriate code
@@ -1382,6 +1389,82 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 commands::indexes::print_json(&result, Some(session.effective_timeouts()))?;
             } else {
                 commands::indexes::print_human(&result, cli.verbose);
+            }
+        }
+        Commands::Context => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
+
+            // Use DiagnosticSession with timeout enforcement
+            let timeout_config = parse_timeout_config(&cli)?;
+            let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
+
+            // Set up Ctrl+C handler to cancel queries gracefully
+            setup_ctrlc_handler(session.cancel_token());
+
+            // Show effective timeouts unless quiet
+            if !cli.quiet && !cli.json {
+                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
+            }
+
+            let result = commands::context::run_context(
+                session.client(),
+                &conn_result.url,
+                !cli.read_write, // read_only is the inverse of read_write flag
+                cli.no_redact,
+            )
+            .await?;
+
+            if cli.json {
+                commands::context::print_json(&result, Some(session.effective_timeouts()))?;
+            } else {
+                commands::context::print_human(&result);
+            }
+        }
+        Commands::Capabilities => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
+
+            // Use DiagnosticSession with timeout enforcement
+            let timeout_config = parse_timeout_config(&cli)?;
+            let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
+
+            // Set up Ctrl+C handler to cancel queries gracefully
+            setup_ctrlc_handler(session.cancel_token());
+
+            // Show effective timeouts unless quiet
+            if !cli.quiet && !cli.json {
+                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
+            }
+
+            let result = commands::capabilities::run_capabilities(
+                session.client(),
+                !cli.read_write, // read_only is the inverse of read_write flag
+            )
+            .await?;
+
+            if cli.json {
+                commands::capabilities::print_json(&result, Some(session.effective_timeouts()))?;
+            } else {
+                commands::capabilities::print_human(&result);
             }
         }
         Commands::Sql {
@@ -1755,6 +1838,8 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 | Commands::Xid { .. }
                 | Commands::Sequences { .. }
                 | Commands::Indexes { .. }
+                | Commands::Context
+                | Commands::Capabilities
                 | Commands::Sql { .. }
                 | Commands::Db { .. }
                 | Commands::Snapshot { .. }

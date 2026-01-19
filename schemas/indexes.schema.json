@@ -3,40 +3,37 @@
   "$id": "pgcrate.diagnostics.indexes",
   "title": "pgcrate indexes output",
   "description": "Index health analysis: missing, unused, and duplicate indexes",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["ok", "schema_id", "schema_version", "missing", "unused", "duplicates", "total_unused_bytes", "total_unused_size", "total_duplicate_bytes", "total_duplicate_size"],
+  "allOf": [
+    { "$ref": "envelope.schema.json" }
+  ],
   "properties": {
-    "ok": {
-      "type": "boolean",
-      "const": true
-    },
-    "schema_id": {
-      "type": "string",
-      "const": "pgcrate.diagnostics.indexes"
-    },
-    "schema_version": {
-      "type": "string",
-      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
-    },
-    "missing": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/missingIndexCandidate" }
-    },
-    "unused": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/unusedIndex" }
-    },
-    "duplicates": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/duplicateIndexSet" }
-    },
-    "total_unused_bytes": { "type": "integer" },
-    "total_unused_size": { "type": "string" },
-    "total_duplicate_bytes": { "type": "integer" },
-    "total_duplicate_size": { "type": "string" }
+    "schema_id": { "const": "pgcrate.diagnostics.indexes" },
+    "data": { "$ref": "#/$defs/indexesData" }
   },
   "$defs": {
+    "indexesData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["missing", "unused", "duplicates", "total_unused_bytes", "total_unused_size", "total_duplicate_bytes", "total_duplicate_size"],
+      "properties": {
+        "missing": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/missingIndexCandidate" }
+        },
+        "unused": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/unusedIndex" }
+        },
+        "duplicates": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/duplicateIndexSet" }
+        },
+        "total_unused_bytes": { "type": "integer" },
+        "total_unused_size": { "type": "string" },
+        "total_duplicate_bytes": { "type": "integer" },
+        "total_duplicate_size": { "type": "string" }
+      }
+    },
     "missingIndexCandidate": {
       "type": "object",
       "additionalProperties": false,

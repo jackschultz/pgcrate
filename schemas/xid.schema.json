@@ -3,37 +3,34 @@
   "$id": "pgcrate.diagnostics.xid",
   "title": "pgcrate xid output",
   "description": "Transaction ID wraparound analysis",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["ok", "schema_id", "schema_version", "databases", "tables", "vacuum_progress", "overall_status"],
+  "allOf": [
+    { "$ref": "envelope.schema.json" }
+  ],
   "properties": {
-    "ok": {
-      "type": "boolean",
-      "const": true
-    },
-    "schema_id": {
-      "type": "string",
-      "const": "pgcrate.diagnostics.xid"
-    },
-    "schema_version": {
-      "type": "string",
-      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
-    },
-    "overall_status": { "$ref": "#/$defs/xidStatus" },
-    "databases": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/databaseXid" }
-    },
-    "tables": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/tableXid" }
-    },
-    "vacuum_progress": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/vacuumProgress" }
-    }
+    "schema_id": { "const": "pgcrate.diagnostics.xid" },
+    "data": { "$ref": "#/$defs/xidData" }
   },
   "$defs": {
+    "xidData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["databases", "tables", "vacuum_progress", "overall_status"],
+      "properties": {
+        "overall_status": { "$ref": "#/$defs/xidStatus" },
+        "databases": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/databaseXid" }
+        },
+        "tables": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/tableXid" }
+        },
+        "vacuum_progress": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/vacuumProgress" }
+        }
+      }
+    },
     "xidStatus": {
       "type": "string",
       "enum": ["healthy", "warning", "critical"]

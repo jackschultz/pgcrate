@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pgcrate.diagnostics.capabilities",
+  "title": "pgcrate capabilities output",
+  "description": "Available capabilities based on privileges and connection mode",
+  "allOf": [
+    { "$ref": "envelope.schema.json" }
+  ],
+  "properties": {
+    "schema_id": { "const": "pgcrate.diagnostics.capabilities" },
+    "data": { "$ref": "#/$defs/capabilitiesData" }
+  },
+  "$defs": {
+    "capabilitiesData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capabilities", "summary"],
+      "properties": {
+        "capabilities": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/capabilityInfo" },
+          "description": "List of all capabilities and their status"
+        },
+        "summary": { "$ref": "#/$defs/capabilitySummary" }
+      }
+    },
+    "capabilityInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "description", "status", "requirements"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z]+\\.[a-z_]+$",
+          "description": "Capability identifier (e.g., diagnostics.triage)"
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable name"
+        },
+        "description": {
+          "type": "string",
+          "description": "Brief description of the capability"
+        },
+        "status": { "$ref": "#/$defs/capabilityStatus" },
+        "reasons": {
+          "type": "array",
+          "items": { "$ref": "envelope.schema.json#/$defs/reasonInfo" },
+          "description": "Reasons for degraded/unavailable status"
+        },
+        "requirements": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/requirement" },
+          "description": "Requirements and their status"
+        },
+        "limitations": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Limitations when degraded"
+        }
+      }
+    },
+    "capabilityStatus": {
+      "type": "string",
+      "enum": ["available", "degraded", "unavailable", "unknown"],
+      "description": "Availability status of the capability"
+    },
+    "requirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["what", "met"],
+      "properties": {
+        "what": {
+          "type": "string",
+          "description": "What is required"
+        },
+        "met": {
+          "type": "boolean",
+          "description": "Whether the requirement is met"
+        }
+      }
+    },
+    "capabilitySummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["available", "degraded", "unavailable", "unknown"],
+      "properties": {
+        "available": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Count of available capabilities"
+        },
+        "degraded": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Count of degraded capabilities"
+        },
+        "unavailable": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Count of unavailable capabilities"
+        },
+        "unknown": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Count of capabilities with unknown status"
+        }
+      }
+    }
+  }
+}

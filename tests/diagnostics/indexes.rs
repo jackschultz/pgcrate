@@ -186,12 +186,13 @@ fn test_indexes_json_structure() {
 
     let json = parse_json(&output);
 
-    // Should have expected top-level keys
+    // Should have expected keys (nested in data object)
+    let data = json.get("data").expect("JSON should have data field");
     assert!(
-        json.get("missing").is_some()
-            || json.get("unused").is_some()
-            || json.get("duplicates").is_some(),
-        "JSON should have missing, unused, or duplicates: {}",
+        data.get("missing").is_some()
+            || data.get("unused").is_some()
+            || data.get("duplicates").is_some(),
+        "JSON should have data.missing, data.unused, or data.duplicates: {}",
         json
     );
 }
@@ -267,10 +268,11 @@ fn test_indexes_excludes_primary_keys_from_duplicates() {
 
     // The pk_test_id_idx duplicates the PK index - implementation may or may not flag this.
     // Primary goal: verify the command handles this edge case without error.
-    // The JSON should be valid and contain a duplicates key.
+    // The JSON should be valid and contain a duplicates key (nested in data object).
+    let data = json.get("data").expect("JSON should have data field");
     assert!(
-        json.get("duplicates").is_some(),
-        "JSON should contain duplicates key: {}",
+        data.get("duplicates").is_some(),
+        "JSON should contain data.duplicates key: {}",
         json
     );
 }

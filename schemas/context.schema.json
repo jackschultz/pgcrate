@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pgcrate.diagnostics.context",
+  "title": "pgcrate context output",
+  "description": "Connection context, server information, extensions, and privileges",
+  "allOf": [
+    { "$ref": "envelope.schema.json" }
+  ],
+  "properties": {
+    "schema_id": { "const": "pgcrate.diagnostics.context" },
+    "data": { "$ref": "#/$defs/contextData" }
+  },
+  "$defs": {
+    "contextData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "server", "extensions", "privileges"],
+      "properties": {
+        "target": { "$ref": "#/$defs/targetInfo" },
+        "server": { "$ref": "#/$defs/serverInfo" },
+        "extensions": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Installed extensions (name -> version)"
+        },
+        "privileges": { "$ref": "#/$defs/privilegeInfo" }
+      }
+    },
+    "targetInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "port", "database", "user", "readonly"],
+      "properties": {
+        "host": {
+          "type": "string",
+          "description": "Host (redacted by default)"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Port number"
+        },
+        "database": {
+          "type": "string",
+          "description": "Database name"
+        },
+        "user": {
+          "type": "string",
+          "description": "Connected user"
+        },
+        "readonly": {
+          "type": "boolean",
+          "description": "Whether connection is read-only"
+        }
+      }
+    },
+    "serverInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "version_num", "version_major", "in_recovery"],
+      "properties": {
+        "version": {
+          "type": "string",
+          "description": "Full version string"
+        },
+        "version_num": {
+          "type": "integer",
+          "description": "Numeric version (e.g., 160001)"
+        },
+        "version_major": {
+          "type": "integer",
+          "description": "Major version (e.g., 16)"
+        },
+        "in_recovery": {
+          "type": "boolean",
+          "description": "Whether server is a replica"
+        },
+        "data_directory": {
+          "type": "string",
+          "description": "Data directory path (only with --no-redact)"
+        }
+      }
+    },
+    "privilegeInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pg_stat_activity_select",
+        "pg_cancel_backend_execute",
+        "pg_terminate_backend_execute",
+        "pg_stat_statements_select",
+        "is_superuser",
+        "roles"
+      ],
+      "properties": {
+        "pg_stat_activity_select": {
+          "type": "boolean",
+          "description": "Can read pg_stat_activity"
+        },
+        "pg_cancel_backend_execute": {
+          "type": "boolean",
+          "description": "Can call pg_cancel_backend"
+        },
+        "pg_terminate_backend_execute": {
+          "type": "boolean",
+          "description": "Can call pg_terminate_backend"
+        },
+        "pg_stat_statements_select": {
+          "type": "boolean",
+          "description": "Can read pg_stat_statements"
+        },
+        "is_superuser": {
+          "type": "boolean",
+          "description": "Whether user is superuser"
+        },
+        "roles": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Granted roles"
+        }
+      }
+    }
+  }
+}

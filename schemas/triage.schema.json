@@ -3,56 +3,38 @@
   "$id": "pgcrate.diagnostics.triage",
   "title": "pgcrate triage output",
   "description": "Quick health check showing critical issues first, with graceful degradation",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["ok", "schema_id", "schema_version", "checks", "skipped_checks", "overall_status"],
+  "allOf": [
+    { "$ref": "envelope.schema.json" }
+  ],
   "properties": {
-    "ok": {
-      "type": "boolean",
-      "const": true,
-      "description": "Always true for successful output"
-    },
-    "schema_id": {
-      "type": "string",
-      "const": "pgcrate.diagnostics.triage"
-    },
-    "schema_version": {
-      "type": "string",
-      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
-      "description": "Semver version of this schema"
-    },
-    "overall_status": {
-      "$ref": "#/$defs/checkStatus",
-      "description": "Worst status across all checks"
-    },
-    "checks": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/checkResult" },
-      "description": "Individual health checks, sorted by severity (critical first)"
-    },
-    "skipped_checks": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/skippedCheck" },
-      "description": "Checks that could not run due to permissions, timeouts, etc."
-    }
+    "schema_id": { "const": "pgcrate.diagnostics.triage" },
+    "data": { "$ref": "#/$defs/triageData" }
   },
   "$defs": {
+    "triageData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["checks", "skipped_checks", "overall_status"],
+      "properties": {
+        "overall_status": {
+          "$ref": "#/$defs/checkStatus",
+          "description": "Worst status across all checks"
+        },
+        "checks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/checkResult" },
+          "description": "Individual health checks, sorted by severity (critical first)"
+        },
+        "skipped_checks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/skippedCheck" },
+          "description": "Checks that could not run due to permissions, timeouts, etc."
+        }
+      }
+    },
     "checkStatus": {
       "type": "string",
       "enum": ["healthy", "warning", "critical"]
-    },
-    "skipReason": {
-      "type": "string",
-      "enum": [
-        "insufficient_privilege",
-        "missing_extension",
-        "unsupported_postgres_version",
-        "statement_timeout",
-        "lock_timeout",
-        "not_applicable",
-        "internal_error"
-      ],
-      "description": "Why a check was skipped (stable enum for automation)"
     },
     "checkResult": {
       "type": "object",
@@ -92,7 +74,7 @@
           "type": "string",
           "description": "Identifier of the skipped check"
         },
-        "reason_code": { "$ref": "#/$defs/skipReason" },
+        "reason_code": { "$ref": "envelope.schema.json#/$defs/reasonCode" },
         "reason_human": {
           "type": "string",
           "description": "Human-readable explanation of why the check was skipped"

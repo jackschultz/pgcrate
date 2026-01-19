@@ -554,10 +554,33 @@ pub fn print_json(
     result: &LocksResult,
     timeouts: Option<crate::diagnostic::EffectiveTimeouts>,
 ) -> Result<()> {
-    use crate::output::{schema, DiagnosticOutput};
+    use crate::output::{schema, DiagnosticOutput, Severity};
+
+    // Derive severity from findings
+    let severity = if result
+        .blocking_chains
+        .iter()
+        .any(|c| c.oldest_blocked_seconds > 1800)
+    {
+        // Any lock blocked > 30 min is critical
+        Severity::Critical
+    } else if !result.blocking_chains.is_empty()
+        || result
+            .long_transactions
+            .iter()
+            .any(|t| t.duration_seconds > 1800)
+    {
+        // Blocking locks or transactions > 30 min are warnings
+        Severity::Warning
+    } else if !result.long_transactions.is_empty() || !result.idle_in_transaction.is_empty() {
+        Severity::Warning
+    } else {
+        Severity::Healthy
+    };
+
     let output = match timeouts {
-        Some(t) => DiagnosticOutput::with_timeouts(schema::LOCKS, result, t),
-        None => DiagnosticOutput::new(schema::LOCKS, result),
+        Some(t) => DiagnosticOutput::with_timeouts(schema::LOCKS, result, severity, t),
+        None => DiagnosticOutput::new(schema::LOCKS, result, severity),
     };
     output.print()?;
     Ok(())

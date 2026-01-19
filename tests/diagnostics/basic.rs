@@ -61,15 +61,16 @@ fn test_triage_json_structure() {
         json
     );
 
-    // Data fields (flattened from result)
+    // Data fields (nested in data object)
+    let data = json.get("data").expect("JSON should have data field");
     assert!(
-        json.get("overall_status").is_some(),
-        "JSON should have overall_status: {}",
+        data.get("overall_status").is_some(),
+        "JSON should have data.overall_status: {}",
         json
     );
     assert!(
-        json.get("checks").is_some(),
-        "JSON should have checks: {}",
+        data.get("checks").is_some(),
+        "JSON should have data.checks: {}",
         json
     );
 }
@@ -175,15 +176,16 @@ fn test_sequences_json_structure() {
     let json = parse_json(&output);
     assert!(json.is_object(), "Should return JSON object");
 
-    // Should have expected fields
+    // Should have expected fields (nested in data object)
+    let data = json.get("data").expect("JSON should have data field");
     assert!(
-        json.get("sequences").is_some(),
-        "JSON should have sequences: {}",
+        data.get("sequences").is_some(),
+        "JSON should have data.sequences: {}",
         json
     );
     assert!(
-        json.get("overall_status").is_some(),
-        "JSON should have overall_status: {}",
+        data.get("overall_status").is_some(),
+        "JSON should have data.overall_status: {}",
         json
     );
 }

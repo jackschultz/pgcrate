@@ -29,6 +29,7 @@ const MAX_QUERY_LENGTH: usize = 200;
 ///
 /// Keeps: scheme, host, port, database name, user
 /// Removes: password, query parameters that may contain secrets
+#[allow(dead_code)] // Useful utility, may be used in future for context command
 pub fn redact_dsn(dsn: &str) -> String {
     match Url::parse(dsn) {
         Ok(mut url) => {

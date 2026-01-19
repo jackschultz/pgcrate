@@ -1,5 +1,7 @@
 //! Exit code policy for pgcrate.
 //!
+#![allow(dead_code)] // Constants defined for policy documentation, used selectively
+//!
 //! ## Findings (0-2)
 //!
 //! Diagnostic commands return exit codes based on findings:

@@ -100,38 +100,64 @@ impl Output {
 // JSON Response Types
 // =============================================================================
 
-/// JSON error response (written to stdout with non-zero exit)
+/// JSON error response using envelope structure (written to stdout with non-zero exit).
+/// Matches DiagnosticOutput structure so consumers get consistent envelope format.
 #[derive(Debug, Serialize)]
 pub struct JsonError {
     pub ok: bool,
-    pub error: JsonErrorDetails,
+    pub schema_id: &'static str,
+    pub schema_version: &'static str,
+    pub tool_version: &'static str,
+    pub generated_at: String,
+    pub severity: &'static str,
+    pub errors: Vec<JsonErrorInfo>,
+    /// Always null for error responses
+    pub data: Option<()>,
 }
 
 #[derive(Debug, Serialize)]
-pub struct JsonErrorDetails {
+pub struct JsonErrorInfo {
+    pub code: &'static str,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<String>,
 }
 
 impl JsonError {
+    /// Generic error schema for non-diagnostic failures
+    pub const SCHEMA_ID: &'static str = "pgcrate.error";
+
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             ok: false,
-            error: JsonErrorDetails {
+            schema_id: Self::SCHEMA_ID,
+            schema_version: DIAGNOSTIC_SCHEMA_VERSION,
+            tool_version: TOOL_VERSION,
+            generated_at: chrono::Utc::now().to_rfc3339(),
+            severity: "error",
+            errors: vec![JsonErrorInfo {
+                code: "internal_error",
                 message: message.into(),
                 details: None,
-            },
+            }],
+            data: None,
         }
     }
 
     pub fn with_details(message: impl Into<String>, details: impl Into<String>) -> Self {
         Self {
             ok: false,
-            error: JsonErrorDetails {
+            schema_id: Self::SCHEMA_ID,
+            schema_version: DIAGNOSTIC_SCHEMA_VERSION,
+            tool_version: TOOL_VERSION,
+            generated_at: chrono::Utc::now().to_rfc3339(),
+            severity: "error",
+            errors: vec![JsonErrorInfo {
+                code: "internal_error",
                 message: message.into(),
                 details: Some(details.into()),
-            },
+            }],
+            data: None,
         }
     }
 
@@ -231,19 +257,83 @@ pub struct DescribeResponse {
 
 /// Schema version for diagnostic JSON outputs.
 /// Follows semver: breaking=major, additive=minor, bugfix=patch.
-pub const DIAGNOSTIC_SCHEMA_VERSION: &str = "1.0.0";
+/// v2.0.0: Breaking change - data field is no longer flattened, added severity/warnings/errors.
+pub const DIAGNOSTIC_SCHEMA_VERSION: &str = "2.0.0";
+
+/// Tool version from Cargo.toml.
+pub const TOOL_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Overall severity level for diagnostic output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+#[allow(dead_code)] // Error variant and worst() designed for future use
+pub enum Severity {
+    /// All checks healthy, no issues found
+    Healthy,
+    /// Some issues found that warrant attention
+    Warning,
+    /// Critical issues found that need immediate attention
+    Critical,
+    /// Error during diagnostic execution (not a finding, but a failure)
+    Error,
+}
+
+impl Severity {
+    /// Combine two severities, returning the worst.
+    #[allow(dead_code)]
+    pub fn worst(self, other: Self) -> Self {
+        use Severity::*;
+        match (self, other) {
+            (Error, _) | (_, Error) => Error,
+            (Critical, _) | (_, Critical) => Critical,
+            (Warning, _) | (_, Warning) => Warning,
+            (Healthy, Healthy) => Healthy,
+        }
+    }
+
+    /// Convert from triage CheckStatus.
+    pub fn from_check_status(status: &crate::commands::triage::CheckStatus) -> Self {
+        match status {
+            crate::commands::triage::CheckStatus::Healthy => Severity::Healthy,
+            crate::commands::triage::CheckStatus::Warning => Severity::Warning,
+            crate::commands::triage::CheckStatus::Critical => Severity::Critical,
+        }
+    }
+}
 
 /// Wrapper for diagnostic command JSON output.
 /// Includes schema metadata for stable automation and versioning.
+///
+/// v2.0.0 changes:
+/// - Added `tool_version` and `generated_at` for traceability
+/// - Added `severity` to indicate overall health
+/// - Added `partial` flag when some checks were skipped
+/// - Added `warnings` and `errors` arrays with structured reason codes
+/// - Removed `#[serde(flatten)]` from `data` - data is now a nested field
 #[derive(Debug, Serialize)]
 pub struct DiagnosticOutput<T: Serialize> {
     pub ok: bool,
     pub schema_id: &'static str,
     pub schema_version: &'static str,
+    /// Tool version (pgcrate version that generated this output)
+    pub tool_version: &'static str,
+    /// ISO 8601 timestamp when this output was generated
+    pub generated_at: String,
+    /// Overall severity: healthy, warning, critical, or error
+    pub severity: Severity,
+    /// Whether this output is partial (some checks were skipped)
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub partial: bool,
+    /// Warnings encountered during execution (non-fatal issues)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<crate::reason_codes::ReasonInfo>,
+    /// Errors encountered during execution (fatal issues that prevented checks)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<crate::reason_codes::ReasonInfo>,
     /// Effective timeout configuration used for this diagnostic
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeouts: Option<TimeoutsJson>,
-    #[serde(flatten)]
+    /// Command-specific data payload
     pub data: T,
 }
 
@@ -257,11 +347,17 @@ pub struct TimeoutsJson {
 
 impl<T: Serialize> DiagnosticOutput<T> {
     /// Create a new diagnostic output with the given schema ID and data.
-    pub fn new(schema_id: &'static str, data: T) -> Self {
+    pub fn new(schema_id: &'static str, data: T, severity: Severity) -> Self {
         Self {
             ok: true,
             schema_id,
             schema_version: DIAGNOSTIC_SCHEMA_VERSION,
+            tool_version: TOOL_VERSION,
+            generated_at: chrono::Utc::now().to_rfc3339(),
+            severity,
+            partial: false,
+            warnings: Vec::new(),
+            errors: Vec::new(),
             timeouts: None,
             data,
         }
@@ -271,12 +367,19 @@ impl<T: Serialize> DiagnosticOutput<T> {
     pub fn with_timeouts(
         schema_id: &'static str,
         data: T,
+        severity: Severity,
         timeouts: crate::diagnostic::EffectiveTimeouts,
     ) -> Self {
         Self {
             ok: true,
             schema_id,
             schema_version: DIAGNOSTIC_SCHEMA_VERSION,
+            tool_version: TOOL_VERSION,
+            generated_at: chrono::Utc::now().to_rfc3339(),
+            severity,
+            partial: false,
+            warnings: Vec::new(),
+            errors: Vec::new(),
             timeouts: Some(TimeoutsJson {
                 connect_ms: timeouts.connect_timeout_ms,
                 statement_ms: timeouts.statement_timeout_ms,
@@ -284,6 +387,26 @@ impl<T: Serialize> DiagnosticOutput<T> {
             }),
             data,
         }
+    }
+
+    /// Mark this output as partial (some checks were skipped).
+    pub fn with_partial(mut self, partial: bool) -> Self {
+        self.partial = partial;
+        self
+    }
+
+    /// Add warnings to this output.
+    pub fn with_warnings(mut self, warnings: Vec<crate::reason_codes::ReasonInfo>) -> Self {
+        self.warnings = warnings;
+        self
+    }
+
+    /// Add errors to this output.
+    #[allow(dead_code)]
+    pub fn with_errors(mut self, errors: Vec<crate::reason_codes::ReasonInfo>) -> Self {
+        self.ok = errors.is_empty();
+        self.errors = errors;
+        self
     }
 
     /// Print this output as JSON to stdout.
@@ -301,99 +424,8 @@ pub mod schema {
     pub const XID: &str = "pgcrate.diagnostics.xid";
     pub const SEQUENCES: &str = "pgcrate.diagnostics.sequences";
     pub const INDEXES: &str = "pgcrate.diagnostics.indexes";
-}
-
-/// Diagnostic-specific error response.
-/// Distinguishes "tool failed" from "critical finding" by including schema metadata.
-#[derive(Debug, Serialize)]
-pub struct DiagnosticError {
-    pub ok: bool,
-    /// Which diagnostic command failed
-    pub schema_id: &'static str,
-    pub schema_version: &'static str,
-    /// Stable error code for automation
-    pub error_code: DiagnosticErrorCode,
-    /// Human-readable error message
-    pub message: String,
-    /// Optional additional details (error chain, hints)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub details: Option<String>,
-}
-
-/// Error codes for diagnostic failures (stable enum for automation).
-#[derive(Debug, Clone, Copy, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DiagnosticErrorCode {
-    /// Could not connect to database
-    ConnectionFailed,
-    /// Query timed out (statement_timeout)
-    StatementTimeout,
-    /// Could not acquire lock (lock_timeout)
-    LockTimeout,
-    /// Insufficient privileges to run diagnostic
-    PermissionDenied,
-    /// Internal error in pgcrate
-    InternalError,
-}
-
-impl DiagnosticError {
-    pub fn new(
-        schema_id: &'static str,
-        error_code: DiagnosticErrorCode,
-        message: impl Into<String>,
-    ) -> Self {
-        Self {
-            ok: false,
-            schema_id,
-            schema_version: DIAGNOSTIC_SCHEMA_VERSION,
-            error_code,
-            message: message.into(),
-            details: None,
-        }
-    }
-
-    pub fn with_details(
-        schema_id: &'static str,
-        error_code: DiagnosticErrorCode,
-        message: impl Into<String>,
-        details: impl Into<String>,
-    ) -> Self {
-        Self {
-            ok: false,
-            schema_id,
-            schema_version: DIAGNOSTIC_SCHEMA_VERSION,
-            error_code,
-            message: message.into(),
-            details: Some(details.into()),
-        }
-    }
-
-    /// Classify an anyhow error into a diagnostic error code.
-    pub fn classify_error(err: &anyhow::Error) -> DiagnosticErrorCode {
-        let msg = err.to_string().to_lowercase();
-
-        if msg.contains("connection refused")
-            || msg.contains("could not connect")
-            || msg.contains("connection timed out")
-        {
-            DiagnosticErrorCode::ConnectionFailed
-        } else if msg.contains("statement timeout") || msg.contains("canceling statement") {
-            DiagnosticErrorCode::StatementTimeout
-        } else if msg.contains("lock timeout") || msg.contains("could not obtain lock") {
-            DiagnosticErrorCode::LockTimeout
-        } else if msg.contains("permission denied") || msg.contains("must be superuser") {
-            DiagnosticErrorCode::PermissionDenied
-        } else {
-            DiagnosticErrorCode::InternalError
-        }
-    }
-
-    /// Print this error as JSON to stdout.
-    pub fn print(&self) {
-        let json = serde_json::to_string_pretty(self)
-            .expect("DiagnosticError serialization should never fail");
-        println!("{}", json);
-    }
+    pub const CONTEXT: &str = "pgcrate.diagnostics.context";
+    pub const CAPABILITIES: &str = "pgcrate.diagnostics.capabilities";
 }
 
 // =============================================================================
@@ -468,16 +500,20 @@ mod tests {
     fn test_json_error_basic() {
         let err = JsonError::new("Something went wrong");
         assert!(!err.ok);
-        assert_eq!(err.error.message, "Something went wrong");
-        assert!(err.error.details.is_none());
+        assert_eq!(err.schema_id, "pgcrate.error");
+        assert_eq!(err.severity, "error");
+        assert_eq!(err.errors.len(), 1);
+        assert_eq!(err.errors[0].message, "Something went wrong");
+        assert!(err.errors[0].details.is_none());
     }
 
     #[test]
     fn test_json_error_with_details() {
         let err = JsonError::with_details("Connection failed", "Host not found");
         assert!(!err.ok);
-        assert_eq!(err.error.message, "Connection failed");
-        assert_eq!(err.error.details, Some("Host not found".to_string()));
+        assert_eq!(err.errors.len(), 1);
+        assert_eq!(err.errors[0].message, "Connection failed");
+        assert_eq!(err.errors[0].details, Some("Host not found".to_string()));
     }
 
     #[test]

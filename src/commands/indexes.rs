@@ -554,10 +554,36 @@ pub fn print_json(
     result: &IndexesResult,
     timeouts: Option<crate::diagnostic::EffectiveTimeouts>,
 ) -> Result<()> {
-    use crate::output::{schema, DiagnosticOutput};
+    use crate::output::{schema, DiagnosticOutput, Severity};
+
+    // Derive severity from findings
+    // Missing indexes with high seq scans are concerning
+    // Large amounts of wasted space from unused/duplicates also warrant attention
+    let severity = if result
+        .missing
+        .iter()
+        .any(|m| m.seq_scan > 10000 && m.scan_ratio > 100.0)
+    {
+        // High sequential scans with very poor index coverage
+        Severity::Warning
+    } else if result.total_unused_bytes > 1_000_000_000
+        || result.total_duplicate_bytes > 500_000_000
+    {
+        // Over 1GB wasted on unused indexes or 500MB on duplicates
+        Severity::Warning
+    } else if !result.missing.is_empty()
+        || !result.unused.is_empty()
+        || !result.duplicates.is_empty()
+    {
+        // Some findings - report as warning so automation knows there's something to review
+        Severity::Warning
+    } else {
+        Severity::Healthy
+    };
+
     let output = match timeouts {
-        Some(t) => DiagnosticOutput::with_timeouts(schema::INDEXES, result, t),
-        None => DiagnosticOutput::new(schema::INDEXES, result),
+        Some(t) => DiagnosticOutput::with_timeouts(schema::INDEXES, result, severity, t),
+        None => DiagnosticOutput::new(schema::INDEXES, result, severity),
     };
     output.print()?;
     Ok(())
