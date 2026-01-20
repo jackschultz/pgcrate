@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pgcrate.diagnostics.queries",
+  "title": "pgcrate queries output",
+  "description": "Top queries from pg_stat_statements with performance analysis",
+  "allOf": [
+    { "$ref": "envelope.schema.json" }
+  ],
+  "properties": {
+    "schema_id": { "const": "pgcrate.diagnostics.queries" },
+    "data": { "$ref": "#/$defs/queriesData" }
+  },
+  "$defs": {
+    "queriesData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["queries", "overall_status", "extension_available", "total_queries_tracked"],
+      "properties": {
+        "queries": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/queryInfo" },
+          "description": "Top queries sorted by specified metric"
+        },
+        "overall_status": {
+          "$ref": "#/$defs/queryStatus",
+          "description": "Worst status across all queries"
+        },
+        "extension_available": {
+          "type": "boolean",
+          "description": "Whether pg_stat_statements extension is installed"
+        },
+        "stats_since": {
+          "type": ["string", "null"],
+          "description": "When pg_stat_statements stats were last reset (PG14+)"
+        },
+        "total_queries_tracked": {
+          "type": "integer",
+          "description": "Total number of distinct queries tracked"
+        }
+      }
+    },
+    "queryInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["queryid", "query", "calls", "total_exec_time_ms", "mean_exec_time_ms", "rows", "status"],
+      "properties": {
+        "queryid": {
+          "type": "integer",
+          "description": "Internal hash of the query"
+        },
+        "query": {
+          "type": "string",
+          "description": "Query text (truncated to 500 chars)"
+        },
+        "calls": {
+          "type": "integer",
+          "description": "Number of times executed"
+        },
+        "total_exec_time_ms": {
+          "type": "number",
+          "description": "Total execution time in milliseconds"
+        },
+        "mean_exec_time_ms": {
+          "type": "number",
+          "description": "Mean execution time per call in milliseconds"
+        },
+        "rows": {
+          "type": "integer",
+          "description": "Total rows returned"
+        },
+        "cache_hit_ratio": {
+          "type": ["number", "null"],
+          "description": "Buffer cache hit ratio (0-100)"
+        },
+        "status": {
+          "$ref": "#/$defs/queryStatus"
+        }
+      }
+    },
+    "queryStatus": {
+      "type": "string",
+      "enum": ["healthy", "warning", "critical"],
+      "description": "Query health: healthy (<1s mean), warning (1-5s), critical (>5s)"
+    }
+  }
+}

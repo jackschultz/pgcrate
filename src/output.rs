@@ -431,6 +431,8 @@ pub mod schema {
     pub const CAPABILITIES: &str = "pgcrate.diagnostics.capabilities";
     pub const QUERIES: &str = "pgcrate.diagnostics.queries";
     pub const CONNECTIONS: &str = "pgcrate.diagnostics.connections";
+    pub const EXPLAIN: &str = "pgcrate.diagnostics.explain";
+    pub const STORAGE: &str = "pgcrate.diagnostics.storage";
 }
 
 // =============================================================================

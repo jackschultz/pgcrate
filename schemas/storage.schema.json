@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pgcrate.diagnostics.storage",
+  "title": "pgcrate dba storage output",
+  "description": "Database storage analysis including tables, indexes, and tablespaces",
+  "allOf": [{ "$ref": "envelope.schema.json" }],
+  "properties": {
+    "schema_id": { "const": "pgcrate.diagnostics.storage" },
+    "data": { "$ref": "#/$defs/storageData" }
+  },
+  "$defs": {
+    "storageData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "database_size_bytes",
+        "database_size",
+        "tables",
+        "indexes",
+        "tablespaces",
+        "temp_bytes",
+        "temp_size",
+        "overall_status"
+      ],
+      "properties": {
+        "database_size_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total database size in bytes"
+        },
+        "database_size": {
+          "type": "string",
+          "description": "Human-readable database size"
+        },
+        "tables": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/tableStorage" },
+          "description": "Top tables by size"
+        },
+        "indexes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/indexStorage" },
+          "description": "Top indexes by size"
+        },
+        "tablespaces": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/tablespaceInfo" },
+          "description": "Tablespace information"
+        },
+        "temp_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Temporary file usage in bytes"
+        },
+        "temp_size": {
+          "type": "string",
+          "description": "Human-readable temporary file usage"
+        },
+        "overall_status": {
+          "$ref": "#/$defs/storageStatus",
+          "description": "Overall storage health status"
+        }
+      }
+    },
+    "tableStorage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "name",
+        "total_bytes",
+        "total_size",
+        "table_bytes",
+        "table_size",
+        "index_bytes",
+        "index_size",
+        "toast_bytes",
+        "toast_size",
+        "row_count",
+        "dead_tuples",
+        "dead_tuple_pct",
+        "status"
+      ],
+      "properties": {
+        "schema": {
+          "type": "string",
+          "description": "Schema name"
+        },
+        "name": {
+          "type": "string",
+          "description": "Table name"
+        },
+        "total_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total relation size (table + indexes + TOAST) in bytes"
+        },
+        "total_size": {
+          "type": "string",
+          "description": "Human-readable total size"
+        },
+        "table_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Table-only size in bytes"
+        },
+        "table_size": {
+          "type": "string",
+          "description": "Human-readable table size"
+        },
+        "index_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total index size in bytes"
+        },
+        "index_size": {
+          "type": "string",
+          "description": "Human-readable index size"
+        },
+        "toast_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "TOAST table size in bytes"
+        },
+        "toast_size": {
+          "type": "string",
+          "description": "Human-readable TOAST size"
+        },
+        "row_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Estimated live row count"
+        },
+        "dead_tuples": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of dead tuples (need vacuum)"
+        },
+        "dead_tuple_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of dead tuples"
+        },
+        "last_vacuum": {
+          "type": "string",
+          "description": "Timestamp of last vacuum"
+        },
+        "last_analyze": {
+          "type": "string",
+          "description": "Timestamp of last analyze"
+        },
+        "status": {
+          "$ref": "#/$defs/storageStatus",
+          "description": "Table health status based on dead tuple percentage"
+        }
+      }
+    },
+    "indexStorage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "table",
+        "name",
+        "size_bytes",
+        "size",
+        "index_type",
+        "is_unique",
+        "is_primary",
+        "scans"
+      ],
+      "properties": {
+        "schema": {
+          "type": "string",
+          "description": "Schema name"
+        },
+        "table": {
+          "type": "string",
+          "description": "Table name"
+        },
+        "name": {
+          "type": "string",
+          "description": "Index name"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Index size in bytes"
+        },
+        "size": {
+          "type": "string",
+          "description": "Human-readable index size"
+        },
+        "index_type": {
+          "type": "string",
+          "description": "Index access method (btree, hash, gin, gist, etc.)"
+        },
+        "is_unique": {
+          "type": "boolean",
+          "description": "True if this is a unique index"
+        },
+        "is_primary": {
+          "type": "boolean",
+          "description": "True if this is a primary key index"
+        },
+        "scans": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of index scans since last stats reset"
+        }
+      }
+    },
+    "tablespaceInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "size_bytes", "size"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Tablespace name"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Tablespace size in bytes"
+        },
+        "size": {
+          "type": "string",
+          "description": "Human-readable tablespace size"
+        },
+        "location": {
+          "type": "string",
+          "description": "Filesystem path (if not default tablespace)"
+        }
+      }
+    },
+    "storageStatus": {
+      "type": "string",
+      "enum": ["healthy", "warning", "critical"],
+      "description": "Storage health status"
+    }
+  }
+}

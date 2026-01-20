@@ -779,6 +779,23 @@ enum DbaCommands {
         #[arg(long)]
         by_application: bool,
     },
+    /// Analyze query execution plan
+    Explain {
+        /// SQL query to explain
+        query: Option<String>,
+        /// Read query from file
+        #[arg(long, value_name = "FILE")]
+        file: Option<std::path::PathBuf>,
+        /// Actually execute query with EXPLAIN ANALYZE (careful!)
+        #[arg(long)]
+        analyze: bool,
+    },
+    /// Analyze disk usage (tables, indexes, TOAST)
+    Storage {
+        /// Number of top objects to show (default: 10)
+        #[arg(long, default_value = "10")]
+        top: usize,
+    },
     /// One-command health check (connection, schema, migrations, seeds, config)
     Doctor {
         /// Treat warnings as errors (exit 1 on warnings)
@@ -1445,6 +1462,63 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                         commands::connections::ConnectionStatus::Critical => std::process::exit(2),
                         commands::connections::ConnectionStatus::Warning => std::process::exit(1),
                         commands::connections::ConnectionStatus::Healthy => {}
+                    }
+                }
+
+                DbaCommands::Explain {
+                    query,
+                    file,
+                    analyze,
+                } => {
+                    // Get query from argument or file
+                    let sql = if let Some(ref path) = file {
+                        std::fs::read_to_string(path).with_context(|| {
+                            format!("Failed to read query file: {}", path.display())
+                        })?
+                    } else if let Some(ref q) = query {
+                        q.clone()
+                    } else {
+                        anyhow::bail!("Either a query or --file must be provided");
+                    };
+
+                    let result = commands::explain::run_explain(client, &sql, analyze).await?;
+
+                    if cli.json {
+                        commands::explain::print_json(&result, timeouts)?;
+                    } else {
+                        commands::explain::print_human(&result, cli.verbose);
+                    }
+
+                    // Exit code based on issues
+                    let has_critical = result
+                        .issues
+                        .iter()
+                        .any(|i| matches!(i.severity, commands::explain::IssueSeverity::Critical));
+                    let has_warning = result
+                        .issues
+                        .iter()
+                        .any(|i| matches!(i.severity, commands::explain::IssueSeverity::Warning));
+
+                    if has_critical {
+                        std::process::exit(2);
+                    } else if has_warning {
+                        std::process::exit(1);
+                    }
+                }
+
+                DbaCommands::Storage { top } => {
+                    let result = commands::storage::run_storage(client, top).await?;
+
+                    if cli.json {
+                        commands::storage::print_json(&result, timeouts)?;
+                    } else {
+                        commands::storage::print_human(&result, cli.quiet);
+                    }
+
+                    match result.overall_status {
+                        commands::storage::StorageStatus::Critical => std::process::exit(2),
+                        commands::storage::StorageStatus::Warning => std::process::exit(1),
+                        commands::storage::StorageStatus::Healthy => {}
                     }
                 }
 
