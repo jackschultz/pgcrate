@@ -142,7 +142,10 @@ fn test_describe_no_stats() {
     let setup_result = run_psql(setup_sql, &test_url);
     assert!(setup_result.status.success(), "Setup should succeed");
 
-    let output = run_pgcrate(&["inspect", "table", "public.items", "--no-stats"], &test_url);
+    let output = run_pgcrate(
+        &["inspect", "table", "public.items", "--no-stats"],
+        &test_url,
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -175,7 +178,10 @@ fn test_describe_verbose() {
     let setup_result = run_psql(setup_sql, &test_url);
     assert!(setup_result.status.success(), "Setup should succeed");
 
-    let output = run_pgcrate(&["inspect", "table", "public.items", "--verbose"], &test_url);
+    let output = run_pgcrate(
+        &["inspect", "table", "public.items", "--verbose"],
+        &test_url,
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -270,7 +276,10 @@ fn test_describe_dependents() {
     let setup_result = run_psql(setup_sql, &test_url);
     assert!(setup_result.status.success(), "Setup should succeed");
 
-    let output = run_pgcrate(&["inspect", "table", "public.users", "--dependents"], &test_url);
+    let output = run_pgcrate(
+        &["inspect", "table", "public.users", "--dependents"],
+        &test_url,
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -327,7 +336,10 @@ fn test_describe_dependencies() {
     let setup_result = run_psql(setup_sql, &test_url);
     assert!(setup_result.status.success(), "Setup should succeed");
 
-    let output = run_pgcrate(&["inspect", "table", "public.users", "--dependencies"], &test_url);
+    let output = run_pgcrate(
+        &["inspect", "table", "public.users", "--dependencies"],
+        &test_url,
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -376,7 +388,13 @@ fn test_describe_exclusive_flags() {
     assert!(setup_result.status.success(), "Setup should succeed");
 
     let output = run_pgcrate(
-        &["inspect", "table", "public.items", "--dependents", "--dependencies"],
+        &[
+            "inspect",
+            "table",
+            "public.items",
+            "--dependents",
+            "--dependencies",
+        ],
         &test_url,
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -420,7 +438,10 @@ fn test_describe_composite_fk() {
     assert!(setup_result.status.success(), "Setup should succeed");
 
     // Check dependents of parent (should show child's composite FK)
-    let output = run_pgcrate(&["inspect", "table", "public.parent", "--dependents"], &test_url);
+    let output = run_pgcrate(
+        &["inspect", "table", "public.parent", "--dependents"],
+        &test_url,
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -457,7 +478,10 @@ fn test_describe_with_enum_type() {
     let setup_result = run_psql(setup_sql, &test_url);
     assert!(setup_result.status.success(), "Setup should succeed");
 
-    let output = run_pgcrate(&["inspect", "table", "public.tasks", "--dependencies"], &test_url);
+    let output = run_pgcrate(
+        &["inspect", "table", "public.tasks", "--dependencies"],
+        &test_url,
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -506,7 +530,10 @@ fn test_describe_with_trigger_function() {
     assert!(setup_result.status.success(), "Setup should succeed");
 
     // Check dependencies (should show trigger function)
-    let output = run_pgcrate(&["inspect", "table", "public.items", "--dependencies"], &test_url);
+    let output = run_pgcrate(
+        &["inspect", "table", "public.items", "--dependencies"],
+        &test_url,
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -562,7 +589,10 @@ fn test_describe_partitioned_table() {
     let setup_result = run_psql(setup_sql, &test_url);
     assert!(setup_result.status.success(), "Setup should succeed");
 
-    let output = run_pgcrate(&["inspect", "table", "public.events", "--verbose"], &test_url);
+    let output = run_pgcrate(
+        &["inspect", "table", "public.events", "--verbose"],
+        &test_url,
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -640,7 +670,10 @@ fn test_describe_materialized_view_dependent() {
     let setup_result = run_psql(setup_sql, &test_url);
     assert!(setup_result.status.success(), "Setup should succeed");
 
-    let output = run_pgcrate(&["inspect", "table", "public.products", "--dependents"], &test_url);
+    let output = run_pgcrate(
+        &["inspect", "table", "public.products", "--dependents"],
+        &test_url,
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -677,7 +710,10 @@ fn test_describe_enum_array_dependency() {
     let setup_result = run_psql(setup_sql, &test_url);
     assert!(setup_result.status.success(), "Setup should succeed");
 
-    let output = run_pgcrate(&["inspect", "table", "public.tickets", "--dependencies"], &test_url);
+    let output = run_pgcrate(
+        &["inspect", "table", "public.tickets", "--dependencies"],
+        &test_url,
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
