@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pgcrate.diagnostics.explain",
+  "title": "pgcrate dba explain output",
+  "description": "Query plan analysis with detected issues and recommendations",
+  "allOf": [{ "$ref": "envelope.schema.json" }],
+  "properties": {
+    "schema_id": { "const": "pgcrate.diagnostics.explain" },
+    "data": { "$ref": "#/$defs/explainData" }
+  },
+  "$defs": {
+    "explainData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["query", "plan_text", "plan_json", "analyzed", "issues", "recommendations", "stats"],
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "The SQL query that was analyzed"
+        },
+        "plan_text": {
+          "type": "string",
+          "description": "Human-readable EXPLAIN output"
+        },
+        "plan_json": {
+          "type": "array",
+          "description": "PostgreSQL EXPLAIN JSON output (raw plan tree)"
+        },
+        "analyzed": {
+          "type": "boolean",
+          "description": "True if EXPLAIN ANALYZE was used (query was executed)"
+        },
+        "issues": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/planIssue" },
+          "description": "Performance issues detected in the query plan"
+        },
+        "recommendations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/recommendation" },
+          "description": "Optimization recommendations"
+        },
+        "stats": {
+          "$ref": "#/$defs/planStats",
+          "description": "Cost estimates and execution statistics"
+        }
+      }
+    },
+    "planIssue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["issue_type", "severity", "message"],
+      "properties": {
+        "issue_type": {
+          "$ref": "#/$defs/issueType"
+        },
+        "severity": {
+          "$ref": "#/$defs/issueSeverity"
+        },
+        "message": {
+          "type": "string",
+          "description": "Human-readable description of the issue"
+        },
+        "table": {
+          "type": "string",
+          "description": "Table name if issue is table-specific"
+        },
+        "column": {
+          "type": "string",
+          "description": "Column name if issue is column-specific"
+        }
+      }
+    },
+    "issueType": {
+      "type": "string",
+      "enum": [
+        "seq_scan_large_table",
+        "missing_index_on_filter",
+        "nested_loop_large_set",
+        "sort_without_index",
+        "high_cost_estimate"
+      ],
+      "description": "Type of performance issue detected"
+    },
+    "issueSeverity": {
+      "type": "string",
+      "enum": ["info", "warning", "critical"],
+      "description": "Severity level of the issue"
+    },
+    "recommendation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["recommendation_type", "rationale"],
+      "properties": {
+        "recommendation_type": {
+          "$ref": "#/$defs/recommendationType"
+        },
+        "sql": {
+          "type": "string",
+          "description": "Suggested SQL to implement the recommendation"
+        },
+        "rationale": {
+          "type": "string",
+          "description": "Explanation of why this recommendation is made"
+        }
+      }
+    },
+    "recommendationType": {
+      "type": "string",
+      "enum": ["create_index", "consider_index", "review_query"],
+      "description": "Type of recommendation"
+    },
+    "planStats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["estimated_startup_cost", "estimated_total_cost", "estimated_rows"],
+      "properties": {
+        "estimated_startup_cost": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Estimated cost to return first row"
+        },
+        "estimated_total_cost": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Estimated total cost to complete query"
+        },
+        "estimated_rows": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Estimated number of rows returned"
+        },
+        "actual_time_ms": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Actual execution time in milliseconds (ANALYZE mode only)"
+        },
+        "actual_rows": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Actual number of rows returned (ANALYZE mode only)"
+        },
+        "actual_loops": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Actual number of loops executed (ANALYZE mode only)"
+        }
+      }
+    }
+  }
+}

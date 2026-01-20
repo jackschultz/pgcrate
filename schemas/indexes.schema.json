@@ -52,7 +52,7 @@
     "unusedIndex": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema", "table", "index", "index_size", "index_size_bytes", "idx_scan", "is_unique", "is_primary"],
+      "required": ["schema", "table", "index", "index_size", "index_size_bytes", "idx_scan", "is_unique", "is_primary", "stats_since", "stats_age_days"],
       "properties": {
         "schema": { "type": "string" },
         "table": { "type": "string" },
@@ -61,7 +61,10 @@
         "index_size_bytes": { "type": "integer" },
         "idx_scan": { "type": "integer" },
         "is_unique": { "type": "boolean" },
-        "is_primary": { "type": "boolean" }
+        "is_primary": { "type": "boolean" },
+        "backing_constraint": { "type": "string", "description": "Name of the constraint this index backs (if any)" },
+        "stats_since": { "type": "string", "format": "date-time", "description": "When stats were last reset" },
+        "stats_age_days": { "type": "integer", "description": "Days since stats were reset" }
       }
     },
     "duplicateIndexSet": {

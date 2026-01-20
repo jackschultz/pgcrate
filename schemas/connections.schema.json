@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pgcrate.diagnostics.connections",
+  "title": "pgcrate connections output",
+  "description": "Connection usage analysis vs max_connections",
+  "allOf": [
+    { "$ref": "envelope.schema.json" }
+  ],
+  "properties": {
+    "schema_id": { "const": "pgcrate.diagnostics.connections" },
+    "data": { "$ref": "#/$defs/connectionsData" }
+  },
+  "$defs": {
+    "connectionsData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stats", "overall_status"],
+      "properties": {
+        "stats": {
+          "$ref": "#/$defs/connectionStats",
+          "description": "Overall connection statistics"
+        },
+        "by_user": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/userConnections" },
+          "description": "Connections grouped by user (if requested)"
+        },
+        "by_database": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/databaseConnections" },
+          "description": "Connections grouped by database (if requested)"
+        },
+        "by_application": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/applicationConnections" },
+          "description": "Connections grouped by application (if requested)"
+        },
+        "overall_status": {
+          "$ref": "#/$defs/connectionStatus",
+          "description": "Overall connection health status"
+        }
+      }
+    },
+    "connectionStats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "max_connections", "reserved_connections", "available", "usage_pct", "by_state", "status"],
+      "properties": {
+        "total": {
+          "type": "integer",
+          "description": "Current number of connections"
+        },
+        "max_connections": {
+          "type": "integer",
+          "description": "PostgreSQL max_connections setting"
+        },
+        "reserved_connections": {
+          "type": "integer",
+          "description": "superuser_reserved_connections setting"
+        },
+        "available": {
+          "type": "integer",
+          "description": "Connections available for non-superusers (max - reserved)"
+        },
+        "usage_pct": {
+          "type": "number",
+          "description": "Percentage of available connections in use"
+        },
+        "by_state": {
+          "type": "object",
+          "additionalProperties": { "type": "integer" },
+          "description": "Connection counts by state (active, idle, idle in transaction, etc.)"
+        },
+        "status": {
+          "$ref": "#/$defs/connectionStatus"
+        }
+      }
+    },
+    "userConnections": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["username", "count", "by_state"],
+      "properties": {
+        "username": {
+          "type": "string",
+          "description": "Database username"
+        },
+        "count": {
+          "type": "integer",
+          "description": "Total connections for this user"
+        },
+        "by_state": {
+          "type": "object",
+          "additionalProperties": { "type": "integer" },
+          "description": "Connection counts by state"
+        }
+      }
+    },
+    "databaseConnections": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["database", "count", "by_state"],
+      "properties": {
+        "database": {
+          "type": "string",
+          "description": "Database name"
+        },
+        "count": {
+          "type": "integer",
+          "description": "Total connections for this database"
+        },
+        "by_state": {
+          "type": "object",
+          "additionalProperties": { "type": "integer" },
+          "description": "Connection counts by state"
+        }
+      }
+    },
+    "applicationConnections": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["application_name", "count", "by_state"],
+      "properties": {
+        "application_name": {
+          "type": "string",
+          "description": "Application name from connection string"
+        },
+        "count": {
+          "type": "integer",
+          "description": "Total connections for this application"
+        },
+        "by_state": {
+          "type": "object",
+          "additionalProperties": { "type": "integer" },
+          "description": "Connection counts by state"
+        }
+      }
+    },
+    "connectionStatus": {
+      "type": "string",
+      "enum": ["healthy", "warning", "critical"],
+      "description": "Connection health: healthy (<75%), warning (75-90%), critical (>90%)"
+    }
+  }
+}
