@@ -1231,7 +1231,9 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
         }
         Commands::Dba { ref command } => {
             // Handle `pgcrate dba` (no subcommand) as alias for triage
-            let dba_cmd = command.clone().unwrap_or(DbaCommands::Triage { include_fixes: false });
+            let dba_cmd = command.clone().unwrap_or(DbaCommands::Triage {
+                include_fixes: false,
+            });
 
             // Doctor has its own connection handling, handle it separately
             if let DbaCommands::Doctor { strict } = dba_cmd {
@@ -1313,7 +1315,10 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                     }
                 }
 
-                DbaCommands::Vacuum { ref table, threshold } => {
+                DbaCommands::Vacuum {
+                    ref table,
+                    threshold,
+                } => {
                     let (schema_filter, table_filter) = if let Some(ref t) = table {
                         if let Some((s, tbl)) = t.split_once('.') {
                             (Some(s), Some(tbl))
@@ -1382,7 +1387,10 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                         .as_ref()
                         .map(|s| {
                             commands::queries::QuerySortBy::from_str(s).ok_or_else(|| {
-                                anyhow::anyhow!("Invalid --by value '{}'. Use: total, mean, calls", s)
+                                anyhow::anyhow!(
+                                    "Invalid --by value '{}'. Use: total, mean, calls",
+                                    s
+                                )
                             })
                         })
                         .transpose()?
@@ -1429,155 +1437,158 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                     }
                 }
 
-                DbaCommands::Fix { ref command } => {
-                    match command {
-                        FixCommands::Sequence {
-                            sequence,
-                            upgrade_to,
-                            dry_run,
-                            yes,
-                            verify,
-                        } => {
-                            let (schema, name) = if let Some((s, n)) = sequence.split_once('.') {
-                                (s, n)
-                            } else {
-                                ("public", sequence.as_str())
-                            };
+                DbaCommands::Fix { ref command } => match command {
+                    FixCommands::Sequence {
+                        sequence,
+                        upgrade_to,
+                        dry_run,
+                        yes,
+                        verify,
+                    } => {
+                        let (schema, name) = if let Some((s, n)) = sequence.split_once('.') {
+                            (s, n)
+                        } else {
+                            ("public", sequence.as_str())
+                        };
 
-                            let target_type = commands::fix::sequence::SequenceType::from_str(upgrade_to)
+                        let target_type =
+                            commands::fix::sequence::SequenceType::from_str(upgrade_to)
                                 .ok_or_else(|| {
-                                anyhow::anyhow!(
-                                    "Invalid target type '{}'. Use: integer, bigint",
-                                    upgrade_to
-                                )
-                            })?;
+                                    anyhow::anyhow!(
+                                        "Invalid target type '{}'. Use: integer, bigint",
+                                        upgrade_to
+                                    )
+                                })?;
 
-                            if !cli.read_write && !cli.allow_primary {
-                                anyhow::bail!("Fix commands require --read-write and --primary flags");
-                            }
-
-                            let mut result = commands::fix::sequence::execute_upgrade(
-                                client,
-                                schema,
-                                name,
-                                target_type,
-                                *dry_run || !*yes,
-                            )
-                            .await?;
-
-                            if *verify && result.executed && result.success {
-                                let verify_steps = commands::fix::sequence::get_verify_steps(schema, name);
-                                let verification = commands::fix::verify::run_verification(&verify_steps);
-                                result.verification = Some(verification);
-                            }
-
-                            if cli.json {
-                                commands::fix::sequence::print_json(&result, timeouts)?;
-                            } else {
-                                commands::fix::sequence::print_human(&result, cli.quiet);
-                            }
-
-                            if !result.success {
-                                std::process::exit(1);
-                            }
+                        if !cli.read_write && !cli.allow_primary {
+                            anyhow::bail!("Fix commands require --read-write and --primary flags");
                         }
-                        FixCommands::Index {
-                            drop,
-                            dry_run,
-                            yes,
-                            verify,
-                        } => {
-                            let (schema, name) = if let Some((s, n)) = drop.split_once('.') {
-                                (s, n)
-                            } else {
-                                ("public", drop.as_str())
-                            };
 
-                            if !cli.read_write && !cli.allow_primary {
-                                anyhow::bail!("Fix commands require --read-write and --primary flags");
-                            }
+                        let mut result = commands::fix::sequence::execute_upgrade(
+                            client,
+                            schema,
+                            name,
+                            target_type,
+                            *dry_run || !*yes,
+                        )
+                        .await?;
 
-                            let mut result = commands::fix::index::execute_drop(
-                                client,
-                                schema,
-                                name,
-                                *dry_run || !*yes,
-                            )
-                            .await?;
-
-                            if *verify && result.executed && result.success {
-                                let verify_steps = commands::fix::index::get_verify_steps(name);
-                                let verification = commands::fix::verify::run_verification(&verify_steps);
-                                result.verification = Some(verification);
-                            }
-
-                            if cli.json {
-                                commands::fix::index::print_json(&result, timeouts)?;
-                            } else {
-                                commands::fix::index::print_human(&result, cli.quiet);
-                            }
-
-                            if !result.success {
-                                std::process::exit(1);
-                            }
+                        if *verify && result.executed && result.success {
+                            let verify_steps =
+                                commands::fix::sequence::get_verify_steps(schema, name);
+                            let verification =
+                                commands::fix::verify::run_verification(&verify_steps);
+                            result.verification = Some(verification);
                         }
-                        FixCommands::Vacuum {
-                            table,
-                            freeze,
-                            full,
-                            analyze,
-                            dry_run,
-                            yes,
-                            verify,
-                        } => {
-                            let (schema, name) = if let Some((s, n)) = table.split_once('.') {
-                                (s, n)
-                            } else {
-                                ("public", table.as_str())
-                            };
 
-                            if !cli.read_write && !cli.allow_primary {
-                                anyhow::bail!("Fix commands require --read-write and --primary flags");
-                            }
-                            if *full && !*yes {
-                                anyhow::bail!(
-                                    "VACUUM FULL requires ACCESS EXCLUSIVE lock. Use --yes to confirm."
-                                );
-                            }
+                        if cli.json {
+                            commands::fix::sequence::print_json(&result, timeouts)?;
+                        } else {
+                            commands::fix::sequence::print_human(&result, cli.quiet);
+                        }
 
-                            let options = commands::fix::vacuum::VacuumOptions {
-                                freeze: *freeze,
-                                full: *full,
-                                analyze: *analyze,
-                            };
-
-                            let mut result = commands::fix::vacuum::execute_vacuum(
-                                client,
-                                schema,
-                                name,
-                                &options,
-                                *dry_run || !*yes,
-                            )
-                            .await?;
-
-                            if *verify && result.executed && result.success {
-                                let verify_steps = commands::fix::vacuum::get_verify_steps();
-                                let verification = commands::fix::verify::run_verification(&verify_steps);
-                                result.verification = Some(verification);
-                            }
-
-                            if cli.json {
-                                commands::fix::vacuum::print_json(&result, timeouts)?;
-                            } else {
-                                commands::fix::vacuum::print_human(&result, cli.quiet);
-                            }
-
-                            if !result.success {
-                                std::process::exit(1);
-                            }
+                        if !result.success {
+                            std::process::exit(1);
                         }
                     }
-                }
+                    FixCommands::Index {
+                        drop,
+                        dry_run,
+                        yes,
+                        verify,
+                    } => {
+                        let (schema, name) = if let Some((s, n)) = drop.split_once('.') {
+                            (s, n)
+                        } else {
+                            ("public", drop.as_str())
+                        };
+
+                        if !cli.read_write && !cli.allow_primary {
+                            anyhow::bail!("Fix commands require --read-write and --primary flags");
+                        }
+
+                        let mut result = commands::fix::index::execute_drop(
+                            client,
+                            schema,
+                            name,
+                            *dry_run || !*yes,
+                        )
+                        .await?;
+
+                        if *verify && result.executed && result.success {
+                            let verify_steps = commands::fix::index::get_verify_steps(name);
+                            let verification =
+                                commands::fix::verify::run_verification(&verify_steps);
+                            result.verification = Some(verification);
+                        }
+
+                        if cli.json {
+                            commands::fix::index::print_json(&result, timeouts)?;
+                        } else {
+                            commands::fix::index::print_human(&result, cli.quiet);
+                        }
+
+                        if !result.success {
+                            std::process::exit(1);
+                        }
+                    }
+                    FixCommands::Vacuum {
+                        table,
+                        freeze,
+                        full,
+                        analyze,
+                        dry_run,
+                        yes,
+                        verify,
+                    } => {
+                        let (schema, name) = if let Some((s, n)) = table.split_once('.') {
+                            (s, n)
+                        } else {
+                            ("public", table.as_str())
+                        };
+
+                        if !cli.read_write && !cli.allow_primary {
+                            anyhow::bail!("Fix commands require --read-write and --primary flags");
+                        }
+                        if *full && !*yes {
+                            anyhow::bail!(
+                                "VACUUM FULL requires ACCESS EXCLUSIVE lock. Use --yes to confirm."
+                            );
+                        }
+
+                        let options = commands::fix::vacuum::VacuumOptions {
+                            freeze: *freeze,
+                            full: *full,
+                            analyze: *analyze,
+                        };
+
+                        let mut result = commands::fix::vacuum::execute_vacuum(
+                            client,
+                            schema,
+                            name,
+                            &options,
+                            *dry_run || !*yes,
+                        )
+                        .await?;
+
+                        if *verify && result.executed && result.success {
+                            let verify_steps = commands::fix::vacuum::get_verify_steps();
+                            let verification =
+                                commands::fix::verify::run_verification(&verify_steps);
+                            result.verification = Some(verification);
+                        }
+
+                        if cli.json {
+                            commands::fix::vacuum::print_json(&result, timeouts)?;
+                        } else {
+                            commands::fix::vacuum::print_human(&result, cli.quiet);
+                        }
+
+                        if !result.success {
+                            std::process::exit(1);
+                        }
+                    }
+                },
 
                 DbaCommands::Locks {
                     blocking,
@@ -1597,7 +1608,8 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                         return Ok(());
                     }
                     if let Some(pid) = kill {
-                        commands::locks::terminate_connection(client, pid, execute, should_redact).await?;
+                        commands::locks::terminate_connection(client, pid, execute, should_redact)
+                            .await?;
                         return Ok(());
                     }
 
@@ -1613,7 +1625,8 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                     };
 
                     if show_blocking {
-                        result.blocking_chains = commands::locks::get_blocking_chains(client).await?;
+                        result.blocking_chains =
+                            commands::locks::get_blocking_chains(client).await?;
                     }
                     if show_long_tx {
                         let min_minutes = long_tx.unwrap_or(5);
@@ -1633,13 +1646,19 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                         commands::locks::print_json(&result, timeouts)?;
                     } else {
                         if show_blocking {
-                            commands::locks::print_blocking_chains(&result.blocking_chains, cli.quiet);
+                            commands::locks::print_blocking_chains(
+                                &result.blocking_chains,
+                                cli.quiet,
+                            );
                         }
                         if show_long_tx {
                             if show_blocking && !result.blocking_chains.is_empty() {
                                 println!();
                             }
-                            commands::locks::print_long_transactions(&result.long_transactions, cli.quiet);
+                            commands::locks::print_long_transactions(
+                                &result.long_transactions,
+                                cli.quiet,
+                            );
                         }
                         if show_idle {
                             if (show_blocking && !result.blocking_chains.is_empty())

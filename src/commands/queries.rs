@@ -277,7 +277,9 @@ pub fn print_human(result: &QueriesResult, quiet: bool) {
             println!("pg_stat_statements extension not installed.");
             println!();
             println!("To enable query tracking:");
-            println!("  1. Add to postgresql.conf: shared_preload_libraries = 'pg_stat_statements'");
+            println!(
+                "  1. Add to postgresql.conf: shared_preload_libraries = 'pg_stat_statements'"
+            );
             println!("  2. Restart PostgreSQL");
             println!("  3. Run: CREATE EXTENSION pg_stat_statements;");
         }
@@ -295,7 +297,10 @@ pub fn print_human(result: &QueriesResult, quiet: bool) {
     if let Some(ref since) = result.stats_since {
         println!("  Stats since: {}", since);
     }
-    println!("  Total tracked: {}", format_number(result.total_queries_tracked));
+    println!(
+        "  Total tracked: {}",
+        format_number(result.total_queries_tracked)
+    );
     println!();
 
     // Header

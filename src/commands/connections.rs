@@ -102,7 +102,8 @@ async fn get_max_connections(client: &Client) -> Result<i32> {
 
 /// Get superuser_reserved_connections setting
 async fn get_reserved_connections(client: &Client) -> Result<i32> {
-    let query = "SELECT setting::int FROM pg_settings WHERE name = 'superuser_reserved_connections'";
+    let query =
+        "SELECT setting::int FROM pg_settings WHERE name = 'superuser_reserved_connections'";
     let row = client
         .query_one(query, &[])
         .await
@@ -172,11 +173,13 @@ async fn get_connections_by_user(client: &Client) -> Result<Vec<UserConnections>
         let state: String = row.get("state");
         let count: i32 = row.get("count");
 
-        let entry = user_map.entry(username.clone()).or_insert_with(|| UserConnections {
-            username,
-            count: 0,
-            by_state: HashMap::new(),
-        });
+        let entry = user_map
+            .entry(username.clone())
+            .or_insert_with(|| UserConnections {
+                username,
+                count: 0,
+                by_state: HashMap::new(),
+            });
         entry.count += count;
         entry.by_state.insert(state, count);
     }
@@ -211,11 +214,13 @@ async fn get_connections_by_database(client: &Client) -> Result<Vec<DatabaseConn
         let state: String = row.get("state");
         let count: i32 = row.get("count");
 
-        let entry = db_map.entry(database.clone()).or_insert_with(|| DatabaseConnections {
-            database,
-            count: 0,
-            by_state: HashMap::new(),
-        });
+        let entry = db_map
+            .entry(database.clone())
+            .or_insert_with(|| DatabaseConnections {
+                database,
+                count: 0,
+                by_state: HashMap::new(),
+            });
         entry.count += count;
         entry.by_state.insert(state, count);
     }
@@ -250,13 +255,14 @@ async fn get_connections_by_application(client: &Client) -> Result<Vec<Applicati
         let state: String = row.get("state");
         let count: i32 = row.get("count");
 
-        let entry = app_map
-            .entry(application_name.clone())
-            .or_insert_with(|| ApplicationConnections {
-                application_name,
-                count: 0,
-                by_state: HashMap::new(),
-            });
+        let entry =
+            app_map
+                .entry(application_name.clone())
+                .or_insert_with(|| ApplicationConnections {
+                    application_name,
+                    count: 0,
+                    by_state: HashMap::new(),
+                });
         entry.count += count;
         entry.by_state.insert(state, count);
     }
@@ -337,18 +343,9 @@ pub fn print_human(result: &ConnectionsResult, quiet: bool) {
         stats.usage_pct
     );
     println!();
-    println!(
-        "    max_connections: {}",
-        stats.max_connections
-    );
-    println!(
-        "    superuser_reserved: {}",
-        stats.reserved_connections
-    );
-    println!(
-        "    available: {}",
-        stats.available
-    );
+    println!("    max_connections: {}", stats.max_connections);
+    println!("    superuser_reserved: {}", stats.reserved_connections);
+    println!("    available: {}", stats.available);
     println!("    in use: {}", stats.total);
 
     // State breakdown
@@ -358,7 +355,11 @@ pub fn print_human(result: &ConnectionsResult, quiet: bool) {
         let mut states: Vec<_> = stats.by_state.iter().collect();
         states.sort_by(|a, b| b.1.cmp(a.1));
         for (state, count) in states {
-            let state_display = if state == "null" { "null (backend)" } else { state };
+            let state_display = if state == "null" {
+                "null (backend)"
+            } else {
+                state
+            };
             println!("    {:30} {:>5}", state_display, count);
         }
     }
@@ -405,7 +406,10 @@ pub fn print_human(result: &ConnectionsResult, quiet: bool) {
         println!("  BY APPLICATION:");
         for app in apps.iter().take(10) {
             let app_name = if app.application_name.chars().count() > 30 {
-                format!("{}...", app.application_name.chars().take(27).collect::<String>())
+                format!(
+                    "{}...",
+                    app.application_name.chars().take(27).collect::<String>()
+                )
             } else {
                 app.application_name.clone()
             };
@@ -422,7 +426,9 @@ pub fn print_human(result: &ConnectionsResult, quiet: bool) {
             ConnectionStatus::Critical => {
                 println!();
                 println!("  ✗ CRITICAL: Connection usage >{}%", CONN_CRITICAL_PCT);
-                println!("    Consider increasing max_connections or investigating connection leaks");
+                println!(
+                    "    Consider increasing max_connections or investigating connection leaks"
+                );
             }
             ConnectionStatus::Warning => {
                 println!();

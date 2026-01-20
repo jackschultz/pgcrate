@@ -428,7 +428,12 @@ async fn check_sequences(client: &Client) -> CheckOutcome {
                     name,
                     label,
                     status: CheckStatus::Critical,
-                    summary: format!("{} at {:.1}% (+ {} more)", seq_name, pct, critical.len() - 1),
+                    summary: format!(
+                        "{} at {:.1}% (+ {} more)",
+                        seq_name,
+                        pct,
+                        critical.len() - 1
+                    ),
                     details: None,
                     next_actions: vec![NextAction::pgcrate(
                         &["dba", "sequences"],
