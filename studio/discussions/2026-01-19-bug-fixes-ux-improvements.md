@@ -2,7 +2,7 @@
 
 **Date:** 2026-01-19
 **Source:** builder-studio agent feedback analysis (106 feedback issues)
-**Status:** Bugs resolved, UX improvements pending
+**Status:** ✅ All bugs and UX improvements resolved
 
 ---
 
@@ -40,67 +40,32 @@ Changed triage query to use `round(..., 2)::float8` matching sequences.rs.
 
 ---
 
-## Priority 2: UX Improvements
+## Priority 2: UX Improvements (All Resolved)
 
-### UX-1: --verbose Should Show SQL Queries
+### UX-1: --show-sql Flag for Triage ✅ FIXED
 
-**Feedback:** "Initially tried to use --verbose flag to see the underlying SQL queries but it didn't output the SQL"
+**Fixed in:** v0.4.0 (2026-01-19)
 
-**Location:** Diagnostic commands don't log SQL even with --verbose
-
-**Fix:** Add SQL logging when verbose=true. In diagnostic functions, print queries before execution:
-```rust
-if verbose {
-    eprintln!("-- Executing SQL:");
-    eprintln!("{}", query);
-}
-```
-
-**Files to update:**
-- `src/commands/triage.rs`
-- `src/commands/xid.rs`
-- `src/commands/sequences.rs`
-- `src/commands/locks.rs`
-- `src/commands/indexes.rs`
-- `src/commands/bloat.rs`
-- `src/commands/replication.rs`
-- `src/commands/vacuum.rs`
+Added `pgcrate dba triage --show-sql` flag that prints all SQL queries used by triage.
+This provides transparency into what queries are being run.
 
 ---
 
-### UX-2: Command Naming Aliases
+### UX-2: Command Naming Aliases ✅ ALREADY IMPLEMENTED
 
-**Feedback:** 25+ reports of trying `pgcrate migration create` instead of `pgcrate migrate new`
-
-**Options:**
-1. Add `migration` as alias for `migrate` subcommand
-2. Add helpful error message suggesting correct command
-3. Add `create` as alias for `new`
-
-**Recommendation:** Add aliases for common mistakes:
-- `migration` → `migrate`
-- `migrate create` → `migrate new`
-
-**Files:** `src/main.rs`
+Aliases already existed:
+- `pgcrate migration` → `pgcrate migrate` (visible_alias)
+- `pgcrate migrate create` → `pgcrate migrate new` (visible_alias)
 
 ---
 
-### UX-3: Write Flags Confusion
+### UX-3: Write Flags ✅ ALREADY IMPLEMENTED
 
-**Feedback:** "Need both --read-write AND --allow-write for INSERT operations - confusing"
-
-**Analysis:** Two separate flags for writes is redundant for most use cases.
-
-**Fix Options:**
-1. Make `--allow-write` imply `--read-write`
-2. Better error message explaining both are needed
-3. Add `--write` as shorthand for both
-
-**Recommendation:** Option 1 - `--allow-write` should imply `--read-write`
+`--allow-write` already implies `--read-write` (line 1885-1886 in main.rs).
 
 ---
 
-## Implementation Order
+## Implementation Order (Historical)
 
 1. **BUG-1:** UTF-8 fix in sequences.rs (5 min)
 2. **BUG-2:** xid_age type fix in triage.rs (5 min)
