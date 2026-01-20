@@ -316,7 +316,7 @@ fn test_readonly_user_can_run_diagnostics() {
         .unwrap_or("unknown");
 
     // Diagnostic commands should work with read-only user
-    let output = project.run_pgcrate(&["sequences", "-d", &readonly_url]);
+    let output = project.run_pgcrate(&["dba", "sequences", "-d", &readonly_url]);
 
     // Should succeed (diagnostics are read-only)
     // Note: May return non-zero for warnings, but shouldn't fail with permission error

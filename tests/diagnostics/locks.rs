@@ -53,7 +53,7 @@ fn test_locks_healthy_no_blocking() {
 
     // With no active transactions, locks should succeed (exit 0)
     // run_pgcrate_ok already asserts success
-    let output = project.run_pgcrate_ok(&["locks"]);
+    let output = project.run_pgcrate_ok(&["dba", "locks"]);
 
     let out = stdout(&output);
     let err = stderr(&output);
@@ -74,7 +74,7 @@ fn test_locks_json_output_structure() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate_ok(&["locks", "--json"]);
+    let output = project.run_pgcrate_ok(&["dba", "locks", "--json"]);
 
     let out = stdout(&output);
     // --json flag MUST produce valid JSON
@@ -102,7 +102,7 @@ fn test_locks_blocking_flag() {
 
     // --blocking should filter to only blocking chains
     // With no blocking, should succeed (run_pgcrate_ok asserts success)
-    let _output = project.run_pgcrate_ok(&["locks", "--blocking"]);
+    let _output = project.run_pgcrate_ok(&["dba", "locks", "--blocking"]);
 }
 
 // ============================================================================
@@ -118,7 +118,7 @@ fn test_locks_long_tx_threshold() {
     project.run_pgcrate_ok(&["migrate", "up"]);
 
     // Test the --long-tx flag is accepted
-    let output = project.run_pgcrate(&["locks", "--long-tx", "1"]);
+    let output = project.run_pgcrate(&["dba", "locks", "--long-tx", "1"]);
 
     let err = stderr(&output);
     // Known issue: f64 to numeric conversion bug in pgcrate
@@ -155,7 +155,7 @@ fn test_locks_detects_long_transaction() {
 
     // Check for long transactions with a very short threshold (0 minutes = any active)
     // Note: pg_stat_activity may not show it as "long" immediately
-    let output = project.run_pgcrate(&["locks", "--long-tx", "0"]);
+    let output = project.run_pgcrate(&["dba", "locks", "--long-tx", "0"]);
 
     let out = stdout(&output);
     let err = stderr(&output);
@@ -194,7 +194,7 @@ fn test_locks_idle_in_tx_flag() {
     project.run_pgcrate_ok(&["migrate", "up"]);
 
     // Test the --idle-in-tx flag is accepted
-    let output = project.run_pgcrate_ok(&["locks", "--idle-in-tx"]);
+    let output = project.run_pgcrate_ok(&["dba", "locks", "--idle-in-tx"]);
 
     let out = stdout(&output);
     // Should complete without error
@@ -257,7 +257,7 @@ fn test_locks_detects_blocking_chain() {
     thread::sleep(Duration::from_millis(300));
 
     // Now check for blocking locks
-    let output = project.run_pgcrate(&["locks", "--blocking"]);
+    let output = project.run_pgcrate(&["dba", "locks", "--blocking"]);
 
     let out = stdout(&output);
     let err = stderr(&output);
@@ -292,7 +292,7 @@ fn test_locks_cancel_dry_run() {
 
     // --cancel without --execute should be dry-run
     // Use a fake PID that won't exist
-    let output = project.run_pgcrate(&["locks", "--cancel", "999999"]);
+    let output = project.run_pgcrate(&["dba", "locks", "--cancel", "999999"]);
 
     let out = stdout(&output);
     let err = stderr(&output);
@@ -328,7 +328,7 @@ fn test_locks_kill_dry_run() {
     project.run_pgcrate_ok(&["migrate", "up"]);
 
     // --kill without --execute should be dry-run
-    let output = project.run_pgcrate(&["locks", "--kill", "999999"]);
+    let output = project.run_pgcrate(&["dba", "locks", "--kill", "999999"]);
 
     let out = stdout(&output);
     let err = stderr(&output);
@@ -367,7 +367,7 @@ fn test_locks_json_with_blocking_flag() {
     project.run_pgcrate_ok(&["migrate", "up"]);
 
     // Combine --json and --blocking - must produce valid JSON
-    let output = project.run_pgcrate_ok(&["locks", "--json", "--blocking"]);
+    let output = project.run_pgcrate_ok(&["dba", "locks", "--json", "--blocking"]);
 
     let out = stdout(&output);
     assert!(

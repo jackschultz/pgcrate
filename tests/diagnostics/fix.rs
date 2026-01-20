@@ -348,7 +348,7 @@ fn test_vacuum_diagnostic_json() {
     db.run_sql_ok("CREATE TABLE test_table (id serial PRIMARY KEY, name text);");
     db.run_sql_ok("INSERT INTO test_table (name) SELECT 'test' FROM generate_series(1, 100);");
 
-    let output = project.run_pgcrate_ok(&["vacuum", "--json"]);
+    let output = project.run_pgcrate_ok(&["dba", "vacuum", "--json"]);
 
     let json = parse_json(&output);
     assert_eq!(json.get("ok"), Some(&serde_json::json!(true)));
@@ -373,7 +373,7 @@ fn test_triage_include_fixes_json() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate(&["triage", "--include-fixes", "--json"]);
+    let output = project.run_pgcrate(&["dba", "triage", "--include-fixes", "--json"]);
 
     // Should succeed (exit code 0, 1, or 2 depending on state)
     assert!(

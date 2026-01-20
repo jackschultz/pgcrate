@@ -187,7 +187,7 @@ fn test_doctor_healthy_database_exit_0() {
     write_basic_config(&project);
     setup_pgcrate_tables(&test_url);
 
-    let output = run_doctor(&project, Some(&test_url), &["doctor"]);
+    let output = run_doctor(&project, Some(&test_url), &["dba", "doctor"]);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success(),
@@ -250,7 +250,7 @@ fn test_doctor_missing_tracking_tables_is_error() {
     let out = run_psql("CREATE SCHEMA IF NOT EXISTS pgcrate;", &test_url);
     assert!(out.status.success());
 
-    let output = run_doctor(&project, Some(&test_url), &["doctor"]);
+    let output = run_doctor(&project, Some(&test_url), &["dba", "doctor"]);
     assert_eq!(output.status.code(), Some(1));
 
     drop_test_db(&db_url, &db_name);
@@ -275,7 +275,7 @@ fn test_doctor_pending_migrations_warns() {
     )
     .unwrap();
 
-    let output = run_doctor(&project, Some(&test_url), &["doctor"]);
+    let output = run_doctor(&project, Some(&test_url), &["dba", "doctor"]);
     assert!(
         output.status.success(),
         "warnings should not fail by default"
@@ -283,7 +283,7 @@ fn test_doctor_pending_migrations_warns() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("pending migration"), "stdout: {stdout}");
 
-    let strict = run_doctor(&project, Some(&test_url), &["doctor", "--strict"]);
+    let strict = run_doctor(&project, Some(&test_url), &["dba", "doctor", "--strict"]);
     assert_eq!(strict.status.code(), Some(1));
 
     drop_test_db(&db_url, &db_name);
@@ -308,7 +308,7 @@ fn test_doctor_orphaned_tracking_rows_is_error() {
     );
     assert!(out.status.success());
 
-    let output = run_doctor(&project, Some(&test_url), &["doctor"]);
+    let output = run_doctor(&project, Some(&test_url), &["dba", "doctor"]);
     assert_eq!(output.status.code(), Some(1));
 
     drop_test_db(&db_url, &db_name);
@@ -333,7 +333,7 @@ fn test_doctor_invalid_migration_files_is_error() {
     )
     .unwrap();
 
-    let output = run_doctor(&project, Some(&test_url), &["doctor"]);
+    let output = run_doctor(&project, Some(&test_url), &["dba", "doctor"]);
     assert_eq!(output.status.code(), Some(1));
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
@@ -361,7 +361,7 @@ fn test_doctor_missing_config_and_default_dirs_is_warning() {
     let project = create_temp_project_dir("missing_config_defaults");
     setup_pgcrate_tables(&test_url);
 
-    let output = run_doctor(&project, Some(&test_url), &["doctor"]);
+    let output = run_doctor(&project, Some(&test_url), &["dba", "doctor"]);
     assert!(
         output.status.success(),
         "defaults-mode missing dirs should be warnings only"
@@ -369,7 +369,7 @@ fn test_doctor_missing_config_and_default_dirs_is_warning() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("pgcrate.toml missing"), "stdout: {stdout}");
 
-    let strict = run_doctor(&project, Some(&test_url), &["doctor", "--strict"]);
+    let strict = run_doctor(&project, Some(&test_url), &["dba", "doctor", "--strict"]);
     assert_eq!(strict.status.code(), Some(1));
 
     drop_test_db(&db_url, &db_name);

@@ -11,7 +11,7 @@ fn test_doctor_healthy_database() {
     // Set up a healthy state: migrations applied
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate_ok(&["doctor"]);
+    let output = project.run_pgcrate_ok(&["dba", "doctor"]);
 
     // Should pass health check
     let out = stdout(&output);
@@ -30,7 +30,7 @@ fn test_doctor_json_output() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate_ok(&["doctor", "--json"]);
+    let output = project.run_pgcrate_ok(&["dba", "doctor", "--json"]);
 
     let json = parse_json(&output);
     assert!(json.is_object(), "Should return JSON object");
@@ -56,7 +56,7 @@ fn test_doctor_errors_on_stderr() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate_ok(&["doctor"]);
+    let output = project.run_pgcrate_ok(&["dba", "doctor"]);
 
     // Normal success case - stderr should be empty or just have warnings
     // (We can't guarantee stderr is empty as some implementations log there)
@@ -73,7 +73,7 @@ fn test_doctor_checks_connection() {
 
     // Doctor may return non-zero if schema_migrations is missing
     // We just want to verify it checks the connection
-    let output = project.run_pgcrate(&["doctor"]);
+    let output = project.run_pgcrate(&["dba", "doctor"]);
 
     let out = stdout(&output);
     // Should check database connection - various output formats possible
@@ -98,7 +98,7 @@ fn test_doctor_strict_mode() {
     project.run_pgcrate_ok(&["migrate", "up"]);
 
     // Strict mode should exit non-zero on warnings
-    let output = project.run_pgcrate(&["doctor", "--strict"]);
+    let output = project.run_pgcrate(&["dba", "doctor", "--strict"]);
 
     // In a healthy setup, should still pass
     // (If there are warnings, it would fail)

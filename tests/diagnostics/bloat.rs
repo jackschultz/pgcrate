@@ -19,7 +19,7 @@ url = "{}"
     )
     .unwrap();
 
-    let output = project.run_pgcrate(&["bloat"]);
+    let output = project.run_pgcrate(&["dba", "bloat"]);
 
     // Empty database should be healthy
     assert!(
@@ -36,7 +36,7 @@ fn test_bloat_with_tables() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate(&["bloat"]);
+    let output = project.run_pgcrate(&["dba", "bloat"]);
 
     // Fresh tables should have minimal bloat (healthy)
     assert!(
@@ -53,7 +53,7 @@ fn test_bloat_json_structure() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate_ok(&["bloat", "--json"]);
+    let output = project.run_pgcrate_ok(&["dba", "bloat", "--json"]);
 
     let json = parse_json(&output);
     assert!(json.is_object(), "Should return JSON object");
@@ -93,7 +93,7 @@ fn test_bloat_limit_option() {
     project.run_pgcrate_ok(&["migrate", "up"]);
 
     // Test with custom limit
-    let output = project.run_pgcrate(&["bloat", "--limit", "5"]);
+    let output = project.run_pgcrate(&["dba", "bloat", "--limit", "5"]);
 
     assert!(
         output.status.code().unwrap_or(99) <= 2,
@@ -109,7 +109,7 @@ fn test_bloat_human_output() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate(&["bloat"]);
+    let output = project.run_pgcrate(&["dba", "bloat"]);
     let out = stdout(&output);
 
     // Should show bloat summary

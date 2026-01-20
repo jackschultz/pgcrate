@@ -18,7 +18,7 @@ fn test_triage_healthy_database() {
     // Set up healthy state
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate(&["triage"]);
+    let output = project.run_pgcrate(&["dba", "triage"]);
 
     // Fresh database should be healthy (exit 0)
     // triage returns 0=healthy, 1=warning, 2=critical
@@ -37,7 +37,7 @@ fn test_triage_json_structure() {
     project.run_pgcrate_ok(&["migrate", "up"]);
 
     // Use run_pgcrate (not _ok) because triage can return non-zero for warnings
-    let output = project.run_pgcrate(&["triage", "--json"]);
+    let output = project.run_pgcrate(&["dba", "triage", "--json"]);
 
     // Triage should return valid exit code (0=healthy, 1=warning, 2=critical)
     assert!(
@@ -83,7 +83,7 @@ fn test_triage_output_format() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate(&["triage"]);
+    let output = project.run_pgcrate(&["dba", "triage"]);
 
     let out = stdout(&output);
     // Should have structured output with status indicators
@@ -106,7 +106,7 @@ fn test_triage_errors_on_stderr() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate(&["triage"]);
+    let output = project.run_pgcrate(&["dba", "triage"]);
 
     // On success, main output should be on stdout
     let out = stdout(&output);
@@ -136,7 +136,7 @@ url = "{}"
     .unwrap();
 
     // Empty database has no user sequences
-    let output = project.run_pgcrate(&["sequences"]);
+    let output = project.run_pgcrate(&["dba", "sequences"]);
 
     // Should handle gracefully
     assert!(
@@ -154,7 +154,7 @@ fn test_sequences_healthy_sequence() {
     project.run_pgcrate_ok(&["migrate", "up"]);
 
     // users table has SERIAL id, which creates a sequence
-    let output = project.run_pgcrate(&["sequences"]);
+    let output = project.run_pgcrate(&["dba", "sequences"]);
 
     // Fresh sequence at 0% should be healthy (exit 0)
     assert!(
@@ -171,7 +171,7 @@ fn test_sequences_json_structure() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate_ok(&["sequences", "--json"]);
+    let output = project.run_pgcrate_ok(&["dba", "sequences", "--json"]);
 
     let json = parse_json(&output);
     assert!(json.is_object(), "Should return JSON object");
@@ -198,7 +198,7 @@ fn test_sequences_shows_sequence_info() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate(&["sequences"]);
+    let output = project.run_pgcrate(&["dba", "sequences"]);
 
     let out = stdout(&output);
     // Should list sequence information
@@ -226,7 +226,7 @@ fn test_diagnostics_quiet_mode() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate(&["triage", "--quiet"]);
+    let output = project.run_pgcrate(&["dba", "triage", "--quiet"]);
 
     // Quiet mode should have minimal output (or none on success)
     let _out = stdout(&output);

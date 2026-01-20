@@ -22,7 +22,7 @@ fn test_triage_shows_timeout_info() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate(&["triage"]);
+    let output = project.run_pgcrate(&["dba", "triage"]);
 
     // Should show timeout info in stderr (unless quiet)
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -41,7 +41,7 @@ fn test_triage_quiet_hides_timeout_info() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate(&["triage", "--quiet"]);
+    let output = project.run_pgcrate(&["dba", "triage", "--quiet"]);
 
     // Should NOT show timeout info when quiet
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -60,7 +60,7 @@ fn test_triage_json_hides_timeout_info() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate(&["triage", "--json"]);
+    let output = project.run_pgcrate(&["dba", "triage", "--json"]);
 
     // Should NOT show timeout info in stderr for JSON mode
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -83,7 +83,7 @@ fn test_custom_statement_timeout() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate(&["triage", "--statement-timeout", "10s"]);
+    let output = project.run_pgcrate(&["dba", "triage", "--statement-timeout", "10s"]);
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -101,7 +101,7 @@ fn test_custom_lock_timeout() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate(&["triage", "--lock-timeout", "100ms"]);
+    let output = project.run_pgcrate(&["dba", "triage", "--lock-timeout", "100ms"]);
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -119,7 +119,7 @@ fn test_custom_connect_timeout() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate(&["triage", "--connect-timeout", "3s"]);
+    let output = project.run_pgcrate(&["dba", "triage", "--connect-timeout", "3s"]);
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -175,7 +175,7 @@ fn test_invalid_timeout_format() {
     let db = TestDatabase::new();
     let project = TestProject::from_fixture("with_migrations", &db);
 
-    let output = project.run_pgcrate(&["triage", "--statement-timeout", "invalid"]);
+    let output = project.run_pgcrate(&["dba", "triage", "--statement-timeout", "invalid"]);
 
     assert!(
         !output.status.success(),
@@ -231,7 +231,7 @@ fn test_lock_timeout_prevents_hanging() {
 
     // Now run triage with a short lock timeout - it should NOT hang
     let start = std::time::Instant::now();
-    let output = project.run_pgcrate(&["triage", "--lock-timeout", "100ms"]);
+    let output = project.run_pgcrate(&["dba", "triage", "--lock-timeout", "100ms"]);
     let elapsed = start.elapsed();
 
     // Clean up the background process
@@ -262,7 +262,7 @@ fn test_locks_shows_timeout_info() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate(&["locks"]);
+    let output = project.run_pgcrate(&["dba", "locks"]);
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -280,7 +280,7 @@ fn test_sequences_shows_timeout_info() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate(&["sequences"]);
+    let output = project.run_pgcrate(&["dba", "sequences"]);
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -298,7 +298,7 @@ fn test_indexes_shows_timeout_info() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate(&["indexes"]);
+    let output = project.run_pgcrate(&["dba", "indexes"]);
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -316,7 +316,7 @@ fn test_xid_shows_timeout_info() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate(&["xid"]);
+    let output = project.run_pgcrate(&["dba", "xid"]);
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(

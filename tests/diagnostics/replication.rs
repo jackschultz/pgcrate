@@ -23,7 +23,7 @@ url = "{}"
     .unwrap();
 
     // Standalone server should succeed with healthy status
-    let output = project.run_pgcrate(&["replication"]);
+    let output = project.run_pgcrate(&["dba", "replication"]);
 
     assert!(
         output.status.success(),
@@ -48,7 +48,7 @@ url = "{}"
     )
     .unwrap();
 
-    let output = project.run_pgcrate_ok(&["replication", "--json"]);
+    let output = project.run_pgcrate_ok(&["dba", "replication", "--json"]);
 
     let json = parse_json(&output);
     assert!(json.is_object(), "Should return JSON object");
@@ -89,7 +89,7 @@ url = "{}"
     )
     .unwrap();
 
-    let output = project.run_pgcrate_ok(&["replication", "--json"]);
+    let output = project.run_pgcrate_ok(&["dba", "replication", "--json"]);
 
     let json = parse_json(&output);
     let data = json.get("data").expect("JSON should have data field");
@@ -119,7 +119,7 @@ url = "{}"
     )
     .unwrap();
 
-    let output = project.run_pgcrate(&["replication"]);
+    let output = project.run_pgcrate(&["dba", "replication"]);
     let out = stdout(&output);
 
     // Should show role and status

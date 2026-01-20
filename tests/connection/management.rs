@@ -57,7 +57,7 @@ url = "{}"
 
     // Use named connection - doctor may return non-zero for other issues,
     // but connection should succeed
-    let output = project.run_pgcrate(&["doctor", "-C", "test_conn"]);
+    let output = project.run_pgcrate(&["dba", "doctor", "-C", "test_conn"]);
 
     let out = stdout(&output);
     // Verify connection succeeded (even if other checks failed)
@@ -75,7 +75,7 @@ fn test_connection_named_not_found() {
     let project = TestProject::from_fixture("with_migrations", &db);
 
     // Try to use non-existent named connection
-    let output = project.run_pgcrate(&["doctor", "-C", "nonexistent"]);
+    let output = project.run_pgcrate(&["dba", "doctor", "-C", "nonexistent"]);
 
     assert!(
         !output.status.success(),
@@ -115,7 +115,7 @@ url = "postgres://wrong:wrong@localhost:5432/nonexistent"
 
     // Override with correct URL via -d
     // Doctor may return non-zero for other issues, but connection should work
-    let output = project.run_pgcrate(&["doctor", "-d", db.url()]);
+    let output = project.run_pgcrate(&["dba", "doctor", "-d", db.url()]);
 
     let out = stdout(&output);
     // Verify connection succeeded
@@ -138,7 +138,7 @@ fn test_connection_database_url_flag() {
 
     // Provide URL via --database-url flag
     // Doctor may return non-zero for other issues, but connection should work
-    let output = project.run_pgcrate(&["doctor", "--database-url", db.url()]);
+    let output = project.run_pgcrate(&["dba", "doctor", "--database-url", db.url()]);
 
     let out = stdout(&output);
     // Verify connection succeeded
@@ -165,7 +165,7 @@ fn test_connection_env_var_default() {
 
     // Run with DATABASE_URL env var set (standard fallback)
     let output = Command::new(env!("CARGO_BIN_EXE_pgcrate"))
-        .args(["doctor"])
+        .args(["dba", "doctor"])
         .current_dir(project.dir.path())
         .env_clear()
         .env("DATABASE_URL", db.url())
@@ -199,7 +199,7 @@ fn test_connection_invalid_url_format() {
     std::fs::write(project.path("pgcrate.toml"), config).unwrap();
 
     // Completely invalid URL
-    let output = project.run_pgcrate(&["doctor", "-d", "not-a-valid-url"]);
+    let output = project.run_pgcrate(&["dba", "doctor", "-d", "not-a-valid-url"]);
 
     assert!(
         !output.status.success(),
@@ -233,7 +233,7 @@ fn test_connection_wrong_password() {
         host, port, &db.name
     );
 
-    let output = project.run_pgcrate(&["doctor", "-d", &bad_url]);
+    let output = project.run_pgcrate(&["dba", "doctor", "-d", &bad_url]);
 
     // Should fail with auth error
     assert!(!output.status.success(), "Should fail on wrong password");
@@ -266,7 +266,7 @@ fn test_connection_host_unreachable() {
     let (host, _port) = extract_host_port(db.url());
     let bad_url = format!("postgres://postgres:postgres@{}:59999/test", host);
 
-    let output = project.run_pgcrate(&["doctor", "-d", &bad_url]);
+    let output = project.run_pgcrate(&["dba", "doctor", "-d", &bad_url]);
 
     assert!(!output.status.success(), "Should fail on unreachable host");
 
@@ -301,7 +301,7 @@ fn test_connection_database_not_found() {
         host, port
     );
 
-    let output = project.run_pgcrate(&["doctor", "-d", &bad_url]);
+    let output = project.run_pgcrate(&["dba", "doctor", "-d", &bad_url]);
 
     assert!(
         !output.status.success(),
