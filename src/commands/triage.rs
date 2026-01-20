@@ -935,37 +935,44 @@ pub fn print_triage_queries() {
     eprintln!("=== Triage SQL Queries ===\n");
 
     eprintln!("-- 1. Blocking Locks Check");
-    eprintln!(r#"SELECT
+    eprintln!(
+        r#"SELECT
     count(*) as blocked_count,
     max(extract(epoch from now() - a.query_start))::int as oldest_seconds
 FROM pg_stat_activity a
 WHERE a.wait_event_type = 'Lock'
   AND a.state != 'idle'
-  AND cardinality(pg_blocking_pids(a.pid)) > 0;"#);
+  AND cardinality(pg_blocking_pids(a.pid)) > 0;"#
+    );
     eprintln!();
 
     eprintln!("-- 2. Long Transactions Check");
-    eprintln!(r#"SELECT
+    eprintln!(
+        r#"SELECT
     count(*) as count,
     max(extract(epoch from now() - xact_start))::int as oldest_seconds
 FROM pg_stat_activity
 WHERE state != 'idle'
   AND xact_start IS NOT NULL
-  AND now() - xact_start > interval '5 minutes';"#);
+  AND now() - xact_start > interval '5 minutes';"#
+    );
     eprintln!();
 
     eprintln!("-- 3. XID Age Check");
-    eprintln!(r#"SELECT
+    eprintln!(
+        r#"SELECT
     datname,
     age(datfrozenxid)::bigint as xid_age
 FROM pg_database
 WHERE datallowconn
 ORDER BY age(datfrozenxid) DESC
-LIMIT 1;"#);
+LIMIT 1;"#
+    );
     eprintln!();
 
     eprintln!("-- 4. Sequences Check");
-    eprintln!(r#"SELECT
+    eprintln!(
+        r#"SELECT
     schemaname || '.' || sequencename as seq_name,
     COALESCE(last_value, 0) as last_value,
     CASE
@@ -975,29 +982,36 @@ LIMIT 1;"#);
     END as pct_used
 FROM pg_sequences
 ORDER BY pct_used DESC
-LIMIT 5;"#);
+LIMIT 5;"#
+    );
     eprintln!();
 
     eprintln!("-- 5. Connections Check");
-    eprintln!(r#"SELECT
+    eprintln!(
+        r#"SELECT
     (SELECT count(*) FROM pg_stat_activity WHERE pid != pg_backend_pid()) as total,
-    (SELECT setting::int FROM pg_settings WHERE name = 'max_connections') as max_conn;"#);
+    (SELECT setting::int FROM pg_settings WHERE name = 'max_connections') as max_conn;"#
+    );
     eprintln!();
 
     eprintln!("-- 6. Replication Lag Check");
-    eprintln!(r#"SELECT
+    eprintln!(
+        r#"SELECT
     application_name,
     extract(epoch from replay_lag)::int as lag_seconds
 FROM pg_stat_replication
 WHERE replay_lag IS NOT NULL
 ORDER BY replay_lag DESC
-LIMIT 1;"#);
+LIMIT 1;"#
+    );
     eprintln!();
 
     eprintln!("-- 7. Stats Age Check");
-    eprintln!(r#"SELECT
+    eprintln!(
+        r#"SELECT
     (now() - stats_reset)::text as age
-FROM pg_stat_bgwriter;"#);
+FROM pg_stat_bgwriter;"#
+    );
     eprintln!();
 
     eprintln!("===========================\n");
