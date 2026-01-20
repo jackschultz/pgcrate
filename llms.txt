@@ -6,6 +6,88 @@ pgcrate is a PostgreSQL companion tool for teams not using Rails or Django.
 It provides migrations, seeds, models, introspection, diffing, health checks, anonymization, and snapshots.
 All using raw SQL files (no ORMs) with atomic, reversible operations.
 
+## COMMAND STRUCTURE (v0.4.0+)
+
+Commands are organized into namespaces. **Always use the full command path.**
+
+### Quick Command Reference
+
+| Task | Command |
+|------|---------|
+| Health check | `pgcrate dba doctor` |
+| Quick triage | `pgcrate dba triage` |
+| Check locks | `pgcrate dba locks` |
+| Check sequences | `pgcrate dba sequences` |
+| Check bloat | `pgcrate dba bloat` |
+| Check vacuum | `pgcrate dba vacuum` |
+| Check replication | `pgcrate dba replication` |
+| Check connections | `pgcrate dba connections` |
+| Top queries | `pgcrate dba queries` |
+| XID wraparound | `pgcrate dba xid` |
+| Index analysis | `pgcrate dba indexes` |
+| Describe table | `pgcrate inspect table <name>` |
+| Schema diff | `pgcrate inspect diff --to <url>` |
+| List extensions | `pgcrate inspect extensions` |
+| List roles | `pgcrate inspect roles` |
+| Show grants | `pgcrate inspect grants` |
+| Run migrations | `pgcrate migrate up` |
+| Migration status | `pgcrate migrate status` |
+
+### Command Namespaces
+
+```
+pgcrate
+├── dba                    # DBA diagnostics and health checks
+│   ├── doctor             # One-command health check
+│   ├── triage             # Quick multi-check triage
+│   ├── locks              # Blocking locks, long transactions
+│   ├── sequences          # Sequence exhaustion
+│   ├── xid                # Transaction ID wraparound
+│   ├── indexes            # Missing/unused/duplicate indexes
+│   ├── vacuum             # Dead tuple ratios, vacuum health
+│   ├── bloat              # Table/index bloat estimates
+│   ├── replication        # Streaming replication status
+│   ├── queries            # Top queries (pg_stat_statements)
+│   ├── connections        # Connection usage vs max_connections
+│   └── fix                # Remediation commands
+│       ├── sequence       # Upgrade sequence type
+│       ├── index          # Drop unused index
+│       └── vacuum         # Run VACUUM on table
+├── inspect                # Schema inspection
+│   ├── table <name>       # Describe table structure
+│   ├── diff               # Compare schemas
+│   ├── extensions         # List extensions
+│   ├── roles              # List roles/users
+│   └── grants             # Show permissions
+├── migrate                # Migration management
+│   ├── up                 # Run pending migrations
+│   ├── down               # Roll back migrations
+│   ├── status             # Show migration status
+│   ├── new                # Create new migration
+│   └── baseline           # Mark as applied (brownfield)
+├── model                  # Data model management
+├── seed                   # Seed data management
+├── snapshot               # Database snapshots
+├── sql                    # Run SQL queries
+└── generate               # Generate migrations from DB
+```
+
+### Common Mistakes to Avoid
+
+```bash
+# WRONG - these commands don't exist at top level
+pgcrate locks              # ✗ Use: pgcrate dba locks
+pgcrate sequences          # ✗ Use: pgcrate dba sequences
+pgcrate describe users     # ✗ Use: pgcrate inspect table users
+pgcrate triage             # ✗ Use: pgcrate dba triage
+
+# CORRECT - always use full namespace
+pgcrate dba locks          # ✓
+pgcrate dba sequences      # ✓
+pgcrate inspect table users # ✓
+pgcrate dba triage         # ✓
+```
+
 ## POSTGRESQL VERSION REQUIREMENTS
 
 pgcrate works with PostgreSQL 14+, with some features requiring newer versions:

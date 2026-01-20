@@ -235,7 +235,7 @@ async fn check_blocking_locks(client: &Client) -> CheckOutcome {
                     summary: format!("{} blocked (oldest: {} min)", blocked_count, oldest_min),
                     details: None,
                     next_actions: vec![NextAction::pgcrate(
-                        &["locks", "--blocking"],
+                        &["dba", "locks", "--blocking"],
                         "Show blocking chains and candidate PIDs for cancellation",
                     )],
                 })
@@ -296,7 +296,7 @@ async fn check_long_transactions(client: &Client) -> CheckOutcome {
                     summary: format!("{} long transactions (oldest: {} min)", count, oldest_min),
                     details: None,
                     next_actions: vec![NextAction::pgcrate(
-                        &["locks", "--long-tx", "5"],
+                        &["dba", "locks", "--long-tx", "5"],
                         "List transactions running longer than 5 minutes",
                     )],
                 })
@@ -355,7 +355,7 @@ async fn check_xid_age(client: &Client) -> CheckOutcome {
 
             let next_actions = if status != CheckStatus::Healthy {
                 vec![NextAction::pgcrate(
-                    &["xid"],
+                    &["dba", "xid"],
                     "Show detailed XID age by database and table",
                 )]
             } else {
@@ -431,7 +431,7 @@ async fn check_sequences(client: &Client) -> CheckOutcome {
                     summary: format!("{} at {:.1}% (+ {} more)", seq_name, pct, critical.len() - 1),
                     details: None,
                     next_actions: vec![NextAction::pgcrate(
-                        &["sequences"],
+                        &["dba", "sequences"],
                         "Show all sequences with exhaustion risk",
                     )],
                 })
@@ -445,7 +445,7 @@ async fn check_sequences(client: &Client) -> CheckOutcome {
                     summary: format!("{} at {:.1}%", seq_name, pct),
                     details: None,
                     next_actions: vec![NextAction::pgcrate(
-                        &["sequences"],
+                        &["dba", "sequences"],
                         "Show all sequences with exhaustion risk",
                     )],
                 })
@@ -1013,7 +1013,7 @@ mod tests {
 
     #[test]
     fn test_next_action_command_string() {
-        let action = NextAction::pgcrate(&["locks", "--blocking"], "test");
-        assert_eq!(action.to_command_string(), "pgcrate locks --blocking");
+        let action = NextAction::pgcrate(&["dba", "locks", "--blocking"], "test");
+        assert_eq!(action.to_command_string(), "pgcrate dba locks --blocking");
     }
 }
