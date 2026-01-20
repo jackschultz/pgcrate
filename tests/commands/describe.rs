@@ -10,7 +10,7 @@ fn test_describe_shows_columns() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate_ok(&["describe", "users"]);
+    let output = project.run_pgcrate_ok(&["inspect", "table", "users"]);
 
     let out = stdout(&output);
     // Should show column names
@@ -28,7 +28,7 @@ fn test_describe_shows_indexes() {
     project.run_pgcrate_ok(&["migrate", "up"]);
 
     // posts has an index on user_id
-    let output = project.run_pgcrate_ok(&["describe", "posts"]);
+    let output = project.run_pgcrate_ok(&["inspect", "table", "posts"]);
 
     let out = stdout(&output);
     // Should show the index
@@ -47,7 +47,7 @@ fn test_describe_json_output() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate_ok(&["describe", "users", "--json"]);
+    let output = project.run_pgcrate_ok(&["inspect", "table", "users", "--json"]);
 
     let json = parse_json(&output);
     assert!(json.is_object(), "Should return JSON object");
@@ -68,7 +68,7 @@ fn test_describe_table_not_found() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate(&["describe", "nonexistent_table"]);
+    let output = project.run_pgcrate(&["inspect", "table", "nonexistent_table"]);
 
     // Should fail with clear error
     assert!(
@@ -93,7 +93,7 @@ fn test_describe_with_schema_prefix() {
     project.run_pgcrate_ok(&["migrate", "up"]);
 
     // Should work with schema.table format
-    let output = project.run_pgcrate_ok(&["describe", "public.users"]);
+    let output = project.run_pgcrate_ok(&["inspect", "table", "public.users"]);
 
     let out = stdout(&output);
     assert!(

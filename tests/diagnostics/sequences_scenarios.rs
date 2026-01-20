@@ -51,7 +51,7 @@ fn test_sequences_healthy_at_50_percent() {
     // Create sequence at 50% (below default 70% warning)
     create_sequence_at_percentage(&db, "test_seq_50", 50);
 
-    let output = project.run_pgcrate(&["sequences", "--all"]);
+    let output = project.run_pgcrate(&["dba", "sequences", "--all"]);
 
     // Should exit 0 (healthy)
     assert_eq!(
@@ -75,7 +75,7 @@ fn test_sequences_healthy_at_69_percent() {
     // 69% is just below default 70% warning threshold
     create_sequence_at_percentage(&db, "test_seq_69", 69);
 
-    let output = project.run_pgcrate(&["sequences", "--all"]);
+    let output = project.run_pgcrate(&["dba", "sequences", "--all"]);
 
     assert_eq!(
         output.status.code(),
@@ -102,7 +102,7 @@ fn test_sequences_warning_at_70_percent() {
     // 70% is exactly at default warning threshold
     create_sequence_at_percentage(&db, "test_seq_70", 70);
 
-    let output = project.run_pgcrate(&["sequences"]);
+    let output = project.run_pgcrate(&["dba", "sequences"]);
 
     assert_eq!(
         output.status.code(),
@@ -125,7 +125,7 @@ fn test_sequences_warning_at_84_percent() {
     // 84% is just below default 85% critical threshold
     create_sequence_at_percentage(&db, "test_seq_84", 84);
 
-    let output = project.run_pgcrate(&["sequences"]);
+    let output = project.run_pgcrate(&["dba", "sequences"]);
 
     assert_eq!(
         output.status.code(),
@@ -152,7 +152,7 @@ fn test_sequences_critical_at_85_percent() {
     // 85% is exactly at default critical threshold
     create_sequence_at_percentage(&db, "test_seq_85", 85);
 
-    let output = project.run_pgcrate(&["sequences"]);
+    let output = project.run_pgcrate(&["dba", "sequences"]);
 
     assert_eq!(
         output.status.code(),
@@ -175,7 +175,7 @@ fn test_sequences_critical_at_99_percent() {
     // 99% is critically exhausted
     create_sequence_at_percentage(&db, "test_seq_99", 99);
 
-    let output = project.run_pgcrate(&["sequences"]);
+    let output = project.run_pgcrate(&["dba", "sequences"]);
 
     assert_eq!(
         output.status.code(),
@@ -203,7 +203,7 @@ fn test_sequences_custom_thresholds() {
     create_sequence_at_percentage(&db, "test_seq_custom", 50);
 
     // With --warn 40, 50% should be warning
-    let output = project.run_pgcrate(&["sequences", "--warn", "40", "--crit", "60"]);
+    let output = project.run_pgcrate(&["dba", "sequences", "--warn", "40", "--crit", "60"]);
 
     assert_eq!(
         output.status.code(),
@@ -212,7 +212,7 @@ fn test_sequences_custom_thresholds() {
     );
 
     // With --warn 40 --crit 45, 50% should be critical
-    let output = project.run_pgcrate(&["sequences", "--warn", "40", "--crit", "45"]);
+    let output = project.run_pgcrate(&["dba", "sequences", "--warn", "40", "--crit", "45"]);
 
     assert_eq!(
         output.status.code(),
@@ -235,7 +235,7 @@ fn test_sequences_warning_json_structure() {
 
     create_sequence_at_percentage(&db, "test_seq_json", 75);
 
-    let output = project.run_pgcrate(&["sequences", "--json"]);
+    let output = project.run_pgcrate(&["dba", "sequences", "--json"]);
 
     let out = stdout(&output);
     let json: serde_json::Value = serde_json::from_str(&out)
@@ -279,7 +279,7 @@ fn test_sequences_output_shows_percentage() {
 
     create_sequence_at_percentage(&db, "test_seq_pct", 75);
 
-    let output = project.run_pgcrate(&["sequences", "--all"]);
+    let output = project.run_pgcrate(&["dba", "sequences", "--all"]);
 
     let out = stdout(&output);
     let err = stderr(&output);

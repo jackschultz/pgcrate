@@ -32,7 +32,7 @@ fn test_indexes_detects_duplicate() {
     db.run_sql_ok("CREATE INDEX dup_test_user_id_idx1 ON dup_test(user_id)");
     db.run_sql_ok("CREATE INDEX dup_test_user_id_idx2 ON dup_test(user_id)");
 
-    let output = project.run_pgcrate(&["indexes"]);
+    let output = project.run_pgcrate(&["dba", "indexes"]);
 
     let out = stdout(&output);
 
@@ -63,7 +63,7 @@ fn test_indexes_no_false_duplicate_for_different_columns() {
     db.run_sql_ok("CREATE INDEX order_test_user_created_idx ON order_test(user_id, created_at)");
     db.run_sql_ok("CREATE INDEX order_test_created_user_idx ON order_test(created_at, user_id)");
 
-    let output = project.run_pgcrate(&["indexes", "--json"]);
+    let output = project.run_pgcrate(&["dba", "indexes", "--json"]);
 
     let out = stdout(&output);
     let json: serde_json::Value = serde_json::from_str(&out)
@@ -111,7 +111,7 @@ fn test_indexes_detects_missing_fk_index() {
     );
     // Note: No index on child_tbl(parent_id) - should be flagged
 
-    let output = project.run_pgcrate(&["indexes"]);
+    let output = project.run_pgcrate(&["dba", "indexes"]);
 
     let out = stdout(&output);
 
@@ -151,7 +151,7 @@ fn test_indexes_no_missing_when_fk_has_index() {
     );
     db.run_sql_ok("CREATE INDEX indexed_child_parent_id_idx ON indexed_child(parent_id)");
 
-    let output = project.run_pgcrate(&["indexes", "--json"]);
+    let output = project.run_pgcrate(&["dba", "indexes", "--json"]);
 
     let out = stdout(&output);
     let json: serde_json::Value = serde_json::from_str(&out)
@@ -182,7 +182,7 @@ fn test_indexes_json_structure() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate_ok(&["indexes", "--json"]);
+    let output = project.run_pgcrate_ok(&["dba", "indexes", "--json"]);
 
     let json = parse_json(&output);
 
@@ -222,7 +222,7 @@ fn test_indexes_respects_missing_limit() {
     }
 
     // Request only 2 missing indexes
-    let output = project.run_pgcrate(&["indexes", "--missing-limit", "2", "--json"]);
+    let output = project.run_pgcrate(&["dba", "indexes", "--missing-limit", "2", "--json"]);
 
     let out = stdout(&output);
     let json: serde_json::Value = serde_json::from_str(&out)
@@ -260,7 +260,7 @@ fn test_indexes_excludes_primary_keys_from_duplicates() {
     // Add another index on id - this IS a duplicate of the PK index
     db.run_sql_ok("CREATE INDEX pk_test_id_idx ON pk_test(id)");
 
-    let output = project.run_pgcrate(&["indexes", "--json"]);
+    let output = project.run_pgcrate(&["dba", "indexes", "--json"]);
 
     let out = stdout(&output);
     let json: serde_json::Value = serde_json::from_str(&out)
@@ -290,7 +290,7 @@ fn test_indexes_healthy_no_issues() {
     project.run_pgcrate_ok(&["migrate", "up"]);
 
     // The with_migrations fixture should have proper indexes
-    let output = project.run_pgcrate(&["indexes"]);
+    let output = project.run_pgcrate(&["dba", "indexes"]);
 
     // Should succeed (exit 0) when no issues
     // Note: May have warnings about missing FK indexes from fixture

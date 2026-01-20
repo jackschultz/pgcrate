@@ -689,6 +689,9 @@ enum DbaCommands {
         /// Include structured fix actions in output
         #[arg(long)]
         include_fixes: bool,
+        /// Show SQL queries used by triage (for debugging/learning)
+        #[arg(long)]
+        show_sql: bool,
     },
     /// Inspect blocking locks and long transactions
     Locks {
@@ -1233,6 +1236,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
             // Handle `pgcrate dba` (no subcommand) as alias for triage
             let dba_cmd = command.clone().unwrap_or(DbaCommands::Triage {
                 include_fixes: false,
+                show_sql: false,
             });
 
             // Doctor has its own connection handling, handle it separately
@@ -1286,7 +1290,14 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
             match dba_cmd {
                 DbaCommands::Doctor { .. } => unreachable!(), // Handled above
 
-                DbaCommands::Triage { include_fixes } => {
+                DbaCommands::Triage {
+                    include_fixes,
+                    show_sql,
+                } => {
+                    if show_sql {
+                        commands::triage::print_triage_queries();
+                    }
+
                     let mut results = commands::triage::run_triage(client).await;
 
                     if include_fixes {

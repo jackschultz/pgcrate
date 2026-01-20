@@ -24,6 +24,7 @@ fn test_fix_sequence_dry_run_shows_sql() {
     let output = project.run_pgcrate(&[
         "--read-write",
         "--primary",
+        "dba",
         "fix",
         "sequence",
         "public.test_seq",
@@ -53,6 +54,7 @@ fn test_fix_sequence_requires_gates() {
 
     // Without --read-write and --primary, should fail
     let output = project.run_pgcrate(&[
+        "dba",
         "fix",
         "sequence",
         "public.test_seq",
@@ -77,6 +79,7 @@ fn test_fix_sequence_json_output() {
         "--read-write",
         "--primary",
         "--json",
+        "dba",
         "fix",
         "sequence",
         "public.test_seq",
@@ -114,6 +117,7 @@ fn test_fix_sequence_blocks_downgrade() {
     let output = project.run_pgcrate(&[
         "--read-write",
         "--primary",
+        "dba",
         "fix",
         "sequence",
         "public.test_seq",
@@ -148,6 +152,7 @@ fn test_fix_index_drop_dry_run() {
     let output = project.run_pgcrate(&[
         "--read-write",
         "--primary",
+        "dba",
         "fix",
         "index",
         "--drop",
@@ -197,6 +202,7 @@ fn test_fix_index_blocks_primary_key() {
     let output = project.run_pgcrate(&[
         "--read-write",
         "--primary",
+        "dba",
         "fix",
         "index",
         "--drop",
@@ -225,6 +231,7 @@ fn test_fix_index_json_output() {
         "--read-write",
         "--primary",
         "--json",
+        "dba",
         "fix",
         "index",
         "--drop",
@@ -264,6 +271,7 @@ fn test_fix_vacuum_dry_run() {
     let output = project.run_pgcrate(&[
         "--read-write",
         "--primary",
+        "dba",
         "fix",
         "vacuum",
         "public.test_table",
@@ -289,6 +297,7 @@ fn test_fix_vacuum_full_requires_yes() {
     let output = project.run_pgcrate(&[
         "--read-write",
         "--primary",
+        "dba",
         "fix",
         "vacuum",
         "public.test_table",
@@ -314,6 +323,7 @@ fn test_fix_vacuum_json_output() {
         "--read-write",
         "--primary",
         "--json",
+        "dba",
         "fix",
         "vacuum",
         "public.test_table",
@@ -348,7 +358,7 @@ fn test_vacuum_diagnostic_json() {
     db.run_sql_ok("CREATE TABLE test_table (id serial PRIMARY KEY, name text);");
     db.run_sql_ok("INSERT INTO test_table (name) SELECT 'test' FROM generate_series(1, 100);");
 
-    let output = project.run_pgcrate_ok(&["vacuum", "--json"]);
+    let output = project.run_pgcrate_ok(&["dba", "vacuum", "--json"]);
 
     let json = parse_json(&output);
     assert_eq!(json.get("ok"), Some(&serde_json::json!(true)));
@@ -373,7 +383,7 @@ fn test_triage_include_fixes_json() {
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    let output = project.run_pgcrate(&["triage", "--include-fixes", "--json"]);
+    let output = project.run_pgcrate(&["dba", "triage", "--include-fixes", "--json"]);
 
     // Should succeed (exit code 0, 1, or 2 depending on state)
     assert!(
@@ -422,6 +432,7 @@ fn test_fix_sequence_executes_upgrade() {
     let output = project.run_pgcrate(&[
         "--read-write",
         "--primary",
+        "dba",
         "fix",
         "sequence",
         "public.exec_test_seq",
@@ -470,6 +481,7 @@ fn test_fix_sequence_with_reserved_word_schema() {
     let output = project.run_pgcrate(&[
         "--read-write",
         "--primary",
+        "dba",
         "fix",
         "sequence",
         "user.test_seq",
@@ -509,6 +521,7 @@ fn test_fix_vacuum_with_special_table_name() {
     let output = project.run_pgcrate(&[
         "--read-write",
         "--primary",
+        "dba",
         "fix",
         "vacuum",
         "public.My-Table",
