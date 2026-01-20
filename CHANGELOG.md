@@ -1,5 +1,83 @@
 # Changelog
 
+## v0.4.0
+
+**Command Structure Refactor (PGC-51)**
+
+Restructured CLI to reduce top-level command clutter and provide clearer organization.
+
+### Breaking Changes
+
+All DBA diagnostic commands are now under `pgcrate dba`:
+- `pgcrate triage` → `pgcrate dba triage`
+- `pgcrate locks` → `pgcrate dba locks`
+- `pgcrate sequences` → `pgcrate dba sequences`
+- `pgcrate xid` → `pgcrate dba xid`
+- `pgcrate indexes` → `pgcrate dba indexes`
+- `pgcrate vacuum` → `pgcrate dba vacuum`
+- `pgcrate bloat` → `pgcrate dba bloat`
+- `pgcrate replication` → `pgcrate dba replication`
+- `pgcrate queries` → `pgcrate dba queries`
+- `pgcrate connections` → `pgcrate dba connections`
+- `pgcrate doctor` → `pgcrate dba doctor`
+- `pgcrate fix` → `pgcrate dba fix`
+
+Schema inspection commands are now under `pgcrate inspect`:
+- `pgcrate describe` → `pgcrate inspect table`
+- `pgcrate diff` → `pgcrate inspect diff`
+- `pgcrate extension` → `pgcrate inspect extensions`
+- `pgcrate role` → `pgcrate inspect roles`
+- `pgcrate grants` → `pgcrate inspect grants`
+
+### New Features
+
+- **`pgcrate dba`** (no subcommand) runs triage by default
+- Top-level `--help` now shows ~16 commands instead of ~35
+- Clear separation: developer commands (migrate, model, seed) vs DBA commands vs inspection
+
+### New Command Structure
+
+```
+pgcrate
+├── migrate      # Schema migrations
+├── model        # SQL transformations
+├── seed         # Test data
+├── generate     # Generate migrations from DB
+├── status       # Migration status
+├── dba          # DBA diagnostics and remediation
+│   ├── triage   # Quick health overview (default)
+│   ├── locks    # Blocking locks
+│   ├── sequences# Sequence exhaustion
+│   ├── xid      # Transaction wraparound
+│   ├── indexes  # Index health
+│   ├── vacuum   # Dead tuple diagnostic
+│   ├── bloat    # Table/index bloat
+│   ├── replication # Streaming replication
+│   ├── queries  # Slow queries
+│   ├── connections # Connection usage
+│   ├── doctor   # Project health
+│   └── fix      # Remediation commands
+│       ├── sequence
+│       ├── index
+│       └── vacuum
+├── inspect      # Schema inspection
+│   ├── table    # Table details
+│   ├── diff     # Schema comparison
+│   ├── extensions # List extensions
+│   ├── roles    # List/describe roles
+│   └── grants   # Show permissions
+├── context      # Connection info
+├── capabilities # Permission discovery
+├── sql          # Run queries
+├── snapshot     # Save/restore state
+├── anonymize    # Data anonymization
+├── bootstrap    # Bootstrap environment
+├── db           # Database management
+└── reset        # Reset to clean state
+```
+
+---
+
 ## v0.3.0
 
 **Phase 3a: Query Performance Diagnostics**

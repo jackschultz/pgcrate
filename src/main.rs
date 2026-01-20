@@ -67,20 +67,11 @@ fn parse_timeout_config(cli: &Cli) -> Result<TimeoutConfig> {
 /// Note: For commands with subcommands, JSON support can vary by subcommand.
 fn json_supported(command: &Commands) -> bool {
     match command {
-        Commands::Describe { .. } => true,
-        Commands::Diff { .. } => true,
-        Commands::Doctor { .. } => true,
-        Commands::Triage { .. } => true,
-        Commands::Locks { .. } => true,
-        Commands::Xid { .. } => true,
-        Commands::Sequences { .. } => true,
-        Commands::Indexes { .. } => true,
-        Commands::Vacuum { .. } => true,
-        Commands::Bloat { .. } => true,
-        Commands::Replication => true,
-        Commands::Queries { .. } => true,
-        Commands::Connections { .. } => true,
-        Commands::Fix { .. } => true,
+        // DBA commands all support JSON
+        Commands::Dba { .. } => true,
+        // Inspect commands all support JSON
+        Commands::Inspect { .. } => true,
+        // Operations
         Commands::Context => true,
         Commands::Capabilities => true,
         Commands::Sql { .. } => true,
@@ -88,6 +79,7 @@ fn json_supported(command: &Commands) -> bool {
             command,
             SnapshotCommands::List | SnapshotCommands::Info { .. }
         ),
+        // Schema management
         Commands::Migrate { command } => matches!(command, MigrateCommands::Status),
         Commands::Model { command } => matches!(
             command,
@@ -178,6 +170,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    // ===== Schema Management =====
     /// Migration commands (up, down, status, new, baseline)
     #[command(visible_alias = "migration")]
     Migrate {
@@ -189,7 +182,11 @@ enum Commands {
         #[command(subcommand)]
         command: ModelCommands,
     },
-
+    /// Load seed data from CSV or SQL files
+    Seed {
+        #[command(subcommand)]
+        command: SeedCommands,
+    },
     /// Initialize a new pgcrate project
     Init {
         /// Accept all defaults without prompting
@@ -220,20 +217,6 @@ enum Commands {
         #[arg(long, default_value = "seeds")]
         seeds_dir: String,
     },
-    /// Database management commands
-    Db {
-        #[command(subcommand)]
-        command: DbCommands,
-    },
-    /// Reset database to clean state
-    Reset {
-        /// Confirm you want to reset the database
-        #[arg(long)]
-        yes: bool,
-        /// Full reset: drop and recreate database (instead of just rolling back migrations)
-        #[arg(long)]
-        full: bool,
-    },
     /// Generate migration files from existing database schema
     Generate {
         /// Split mode: "none" (single file), "schema", or "table"
@@ -252,142 +235,24 @@ enum Commands {
         #[arg(long = "exclude-schema", value_name = "SCHEMA")]
         exclude_schemas: Vec<String>,
     },
-    /// Compare two database schemas and show differences
-    Diff {
-        /// Source database URL (default: DATABASE_URL)
-        #[arg(long)]
-        from: Option<String>,
-        /// Target database URL (required)
-        #[arg(long)]
-        to: String,
-        /// Only compare these schemas (can be specified multiple times)
-        #[arg(long = "schema", value_name = "SCHEMA")]
-        schemas: Vec<String>,
-        /// Exclude these schemas (can be specified multiple times)
-        #[arg(
-            long = "exclude-schema",
-            value_name = "SCHEMA",
-            conflicts_with = "schemas"
-        )]
-        exclude_schemas: Vec<String>,
-    },
-    /// Show detailed information about a table
-    Describe {
-        /// Table to describe (schema.name or just name)
-        object: String,
-        /// Show objects that depend on this table
-        #[arg(long, conflicts_with = "dependencies")]
-        dependents: bool,
-        /// Show objects this table depends on
-        #[arg(long, conflicts_with = "dependents")]
-        dependencies: bool,
-        /// Skip table statistics
-        #[arg(long)]
-        no_stats: bool,
-    },
-    /// One-command health check (connection, schema, migrations, seeds, config)
-    Doctor {
-        /// Treat warnings as errors (exit 1 on warnings)
-        #[arg(long)]
-        strict: bool,
-    },
-    /// Quick database health triage (locks, transactions, XID, sequences, connections)
-    Triage {
-        /// Include structured fix actions in output
-        #[arg(long)]
-        include_fixes: bool,
-    },
-    /// Inspect blocking locks and long transactions
-    Locks {
-        /// Show only blocking chains
-        #[arg(long)]
-        blocking: bool,
-        /// Show transactions running longer than N minutes (default: 5)
-        #[arg(long, value_name = "MINUTES")]
-        long_tx: Option<u64>,
-        /// Show idle-in-transaction sessions
-        #[arg(long)]
-        idle_in_tx: bool,
-        /// Cancel query for PID (pg_cancel_backend)
-        #[arg(long, value_name = "PID")]
-        cancel: Option<i32>,
-        /// Terminate connection for PID (pg_terminate_backend)
-        #[arg(long, value_name = "PID")]
-        kill: Option<i32>,
-        /// Actually execute cancel/kill (default is dry-run)
-        #[arg(long)]
-        execute: bool,
-    },
-    /// Monitor transaction ID (XID) age to prevent wraparound
-    Xid {
-        /// Number of tables to show (default: 10)
-        #[arg(long, default_value = "10")]
-        tables: usize,
-    },
-    /// Monitor sequence exhaustion risk
-    Sequences {
-        /// Warning threshold percentage (default: 70)
-        #[arg(long, value_name = "PCT")]
-        warn: Option<i32>,
-        /// Critical threshold percentage (default: 85)
-        #[arg(long, value_name = "PCT")]
-        crit: Option<i32>,
-        /// Show all sequences, not just problematic ones
-        #[arg(long)]
-        all: bool,
-    },
-    /// Analyze missing, unused, and duplicate indexes
-    Indexes {
-        /// Number of missing index candidates to show (default: 10)
-        #[arg(long, default_value = "10")]
-        missing_limit: usize,
-        /// Number of unused indexes to show (default: 20)
-        #[arg(long, default_value = "20")]
-        unused_limit: usize,
-    },
-    /// Monitor table bloat and vacuum health
-    Vacuum {
-        /// Filter to specific table (schema.table)
-        #[arg(long, value_name = "TABLE")]
-        table: Option<String>,
-        /// Warning threshold percentage (default: 10)
-        #[arg(long, value_name = "PCT")]
-        threshold: Option<f64>,
-    },
-    /// Estimate table and index bloat
-    Bloat {
-        /// Number of items to show (default: 10)
-        #[arg(long, default_value = "10")]
-        limit: usize,
-    },
-    /// Monitor streaming replication health
-    Replication,
-    /// Show top queries from pg_stat_statements
-    Queries {
-        /// Sort by: total (default), mean, calls
-        #[arg(long, value_name = "FIELD")]
-        by: Option<String>,
-        /// Number of queries to show (default: 10)
-        #[arg(long, default_value = "10")]
-        limit: usize,
-    },
-    /// Analyze connection usage vs max_connections
-    Connections {
-        /// Group by user
-        #[arg(long)]
-        by_user: bool,
-        /// Group by database
-        #[arg(long)]
-        by_database: bool,
-        /// Group by application
-        #[arg(long)]
-        by_application: bool,
-    },
-    /// Fix commands for remediation
-    Fix {
+    /// Show migration status (alias for `migrate status`)
+    Status,
+
+    // ===== Database Admin =====
+    /// DBA diagnostics and health checks (triage, locks, sequences, fix, etc.)
+    Dba {
         #[command(subcommand)]
-        command: FixCommands,
+        command: Option<DbaCommands>,
     },
+
+    // ===== Inspection =====
+    /// Inspect schema, roles, grants, and extensions
+    Inspect {
+        #[command(subcommand)]
+        command: InspectCommands,
+    },
+
+    // ===== Operations =====
     /// Show connection context, server info, extensions, and privileges
     Context,
     /// Show available capabilities based on privileges and connection mode
@@ -408,15 +273,12 @@ enum Commands {
         #[command(subcommand)]
         command: SnapshotCommands,
     },
+
+    // ===== Data Operations =====
     /// Anonymize data for safe extraction
     Anonymize {
         #[command(subcommand)]
         command: AnonymizeCommands,
-    },
-    /// Load seed data from CSV or SQL files
-    Seed {
-        #[command(subcommand)]
-        command: SeedCommands,
     },
     /// Bootstrap a new environment with anonymized data from a source
     Bootstrap {
@@ -430,57 +292,19 @@ enum Commands {
         #[arg(long)]
         yes: bool,
     },
-    /// Inspect installed PostgreSQL extensions
-    Extension {
+    /// Database management commands
+    Db {
         #[command(subcommand)]
-        command: ExtensionCommands,
+        command: DbCommands,
     },
-    /// Inspect database roles and permissions
-    Role {
-        #[command(subcommand)]
-        command: RoleCommands,
-    },
-    /// Show grants/permissions on database objects
-    Grants {
-        /// Table to show grants for (schema.table)
-        object: Option<String>,
-        /// Show all grants in a schema
+    /// Reset database to clean state
+    Reset {
+        /// Confirm you want to reset the database
         #[arg(long)]
-        schema: Option<String>,
-        /// Show what a specific role can access
+        yes: bool,
+        /// Full reset: drop and recreate database (instead of just rolling back migrations)
         #[arg(long)]
-        role: Option<String>,
-    },
-
-    /// Show migration status (alias for `migrate status`)
-    Status,
-}
-
-#[derive(Subcommand)]
-enum ExtensionCommands {
-    /// List installed extensions
-    List {
-        /// Show available but not installed extensions
-        #[arg(long)]
-        available: bool,
-    },
-}
-
-#[derive(Subcommand)]
-enum RoleCommands {
-    /// List all roles
-    List {
-        /// Show only login roles (users)
-        #[arg(long)]
-        users: bool,
-        /// Show only non-login roles (groups)
-        #[arg(long)]
-        groups: bool,
-    },
-    /// Show detailed info about a role
-    Describe {
-        /// Role name
-        name: String,
+        full: bool,
     },
 }
 
@@ -798,7 +622,7 @@ enum SeedCommands {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 enum FixCommands {
     /// Upgrade sequence type to prevent exhaustion
     Sequence {
@@ -854,6 +678,181 @@ enum FixCommands {
         /// Run verification after fix
         #[arg(long)]
         verify: bool,
+    },
+}
+
+/// DBA diagnostic and remediation commands
+#[derive(Subcommand, Clone)]
+enum DbaCommands {
+    /// Quick database health triage (locks, transactions, XID, sequences, connections)
+    Triage {
+        /// Include structured fix actions in output
+        #[arg(long)]
+        include_fixes: bool,
+    },
+    /// Inspect blocking locks and long transactions
+    Locks {
+        /// Show only blocking chains
+        #[arg(long)]
+        blocking: bool,
+        /// Show transactions running longer than N minutes (default: 5)
+        #[arg(long, value_name = "MINUTES")]
+        long_tx: Option<u64>,
+        /// Show idle-in-transaction sessions
+        #[arg(long)]
+        idle_in_tx: bool,
+        /// Cancel query for PID (pg_cancel_backend)
+        #[arg(long, value_name = "PID")]
+        cancel: Option<i32>,
+        /// Terminate connection for PID (pg_terminate_backend)
+        #[arg(long, value_name = "PID")]
+        kill: Option<i32>,
+        /// Actually execute cancel/kill (default is dry-run)
+        #[arg(long)]
+        execute: bool,
+    },
+    /// Monitor sequence exhaustion risk
+    Sequences {
+        /// Warning threshold percentage (default: 70)
+        #[arg(long, value_name = "PCT")]
+        warn: Option<i32>,
+        /// Critical threshold percentage (default: 85)
+        #[arg(long, value_name = "PCT")]
+        crit: Option<i32>,
+        /// Show all sequences, not just problematic ones
+        #[arg(long)]
+        all: bool,
+    },
+    /// Monitor transaction ID (XID) age to prevent wraparound
+    Xid {
+        /// Number of tables to show (default: 10)
+        #[arg(long, default_value = "10")]
+        tables: usize,
+    },
+    /// Analyze missing, unused, and duplicate indexes
+    Indexes {
+        /// Number of missing index candidates to show (default: 10)
+        #[arg(long, default_value = "10")]
+        missing_limit: usize,
+        /// Number of unused indexes to show (default: 20)
+        #[arg(long, default_value = "20")]
+        unused_limit: usize,
+    },
+    /// Monitor table bloat and vacuum health
+    Vacuum {
+        /// Filter to specific table (schema.table)
+        #[arg(long, value_name = "TABLE")]
+        table: Option<String>,
+        /// Warning threshold percentage (default: 10)
+        #[arg(long, value_name = "PCT")]
+        threshold: Option<f64>,
+    },
+    /// Estimate table and index bloat
+    Bloat {
+        /// Number of items to show (default: 10)
+        #[arg(long, default_value = "10")]
+        limit: usize,
+    },
+    /// Monitor streaming replication health
+    Replication,
+    /// Show top queries from pg_stat_statements
+    Queries {
+        /// Sort by: total (default), mean, calls
+        #[arg(long, value_name = "FIELD")]
+        by: Option<String>,
+        /// Number of queries to show (default: 10)
+        #[arg(long, default_value = "10")]
+        limit: usize,
+    },
+    /// Analyze connection usage vs max_connections
+    Connections {
+        /// Group by user
+        #[arg(long)]
+        by_user: bool,
+        /// Group by database
+        #[arg(long)]
+        by_database: bool,
+        /// Group by application
+        #[arg(long)]
+        by_application: bool,
+    },
+    /// One-command health check (connection, schema, migrations, seeds, config)
+    Doctor {
+        /// Treat warnings as errors (exit 1 on warnings)
+        #[arg(long)]
+        strict: bool,
+    },
+    /// Fix commands for remediation
+    Fix {
+        #[command(subcommand)]
+        command: FixCommands,
+    },
+}
+
+/// Schema and permission inspection commands
+#[derive(Subcommand)]
+enum InspectCommands {
+    /// Show detailed information about a table
+    Table {
+        /// Table to describe (schema.name or just name)
+        object: String,
+        /// Show objects that depend on this table
+        #[arg(long, conflicts_with = "dependencies")]
+        dependents: bool,
+        /// Show objects this table depends on
+        #[arg(long, conflicts_with = "dependents")]
+        dependencies: bool,
+        /// Skip table statistics
+        #[arg(long)]
+        no_stats: bool,
+    },
+    /// Compare two database schemas and show differences
+    Diff {
+        /// Source database URL (default: DATABASE_URL)
+        #[arg(long)]
+        from: Option<String>,
+        /// Target database URL (required)
+        #[arg(long)]
+        to: String,
+        /// Only compare these schemas (can be specified multiple times)
+        #[arg(long = "schema", value_name = "SCHEMA")]
+        schemas: Vec<String>,
+        /// Exclude these schemas (can be specified multiple times)
+        #[arg(
+            long = "exclude-schema",
+            value_name = "SCHEMA",
+            conflicts_with = "schemas"
+        )]
+        exclude_schemas: Vec<String>,
+    },
+    /// List and inspect PostgreSQL extensions
+    Extensions {
+        /// Show available but not installed extensions
+        #[arg(long)]
+        available: bool,
+    },
+    /// List and inspect database roles
+    Roles {
+        /// Show only login roles (users)
+        #[arg(long)]
+        users: bool,
+        /// Show only non-login roles (groups)
+        #[arg(long)]
+        groups: bool,
+        /// Show detailed info about a specific role
+        #[arg(long, value_name = "NAME")]
+        describe: Option<String>,
+    },
+    /// Show grants/permissions on database objects
+    Grants {
+        /// Table to show grants for (schema.table)
+        object: Option<String>,
+        /// Show all grants in a schema
+        #[arg(long)]
+        schema: Option<String>,
+        /// Show what a specific role can access
+        #[arg(long)]
+        role: Option<String>,
     },
 }
 
@@ -1230,501 +1229,37 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 &seeds_dir,
             )?;
         }
-        Commands::Doctor { strict } => {
-            let exit_code = commands::doctor(
-                cli.database_url.as_deref(),
-                cli.config_path.as_deref(),
-                cli.quiet,
-                cli.json,
-                cli.verbose,
-                strict,
-            )
-            .await?;
-            if exit_code != 0 {
-                std::process::exit(exit_code);
-            }
-        }
-        Commands::Triage { ref include_fixes } => {
-            let config =
-                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
-            let conn_result = connection::resolve_and_validate(
-                &config,
-                cli.database_url.as_deref(),
-                cli.connection.as_deref(),
-                cli.env_var.as_deref(),
-                cli.allow_primary,
-                cli.read_write,
-                cli.quiet,
-            )?;
+        Commands::Dba { ref command } => {
+            // Handle `pgcrate dba` (no subcommand) as alias for triage
+            let dba_cmd = command.clone().unwrap_or(DbaCommands::Triage { include_fixes: false });
 
-            // Use DiagnosticSession with timeout enforcement
-            let timeout_config = parse_timeout_config(&cli)?;
-            let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
-
-            // Set up Ctrl+C handler to cancel queries gracefully
-            setup_ctrlc_handler(session.cancel_token());
-
-            // Show effective timeouts unless quiet
-            if !cli.quiet && !cli.json {
-                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
-            }
-
-            let mut results = commands::triage::run_triage(session.client()).await;
-
-            // Generate fix actions when --include-fixes is specified
-            if *include_fixes {
-                let actions = commands::triage::generate_fix_actions(
-                    session.client(),
-                    &results,
-                    cli.read_write,
-                    cli.allow_primary,
+            // Doctor has its own connection handling, handle it separately
+            if let DbaCommands::Doctor { strict } = dba_cmd {
+                let exit_code = commands::doctor(
+                    cli.database_url.as_deref(),
+                    cli.config_path.as_deref(),
+                    cli.quiet,
+                    cli.json,
+                    cli.verbose,
+                    strict,
                 )
-                .await;
-
-                if !actions.is_empty() {
-                    results.actions = Some(actions);
+                .await?;
+                if exit_code != 0 {
+                    std::process::exit(exit_code);
                 }
+                return Ok(());
             }
 
-            if cli.json {
-                commands::triage::print_json(&results, Some(session.effective_timeouts()))?;
-            } else {
-                commands::triage::print_human(&results, cli.quiet);
-            }
-
-            let exit_code = results.exit_code();
-            if exit_code != 0 {
-                std::process::exit(exit_code);
-            }
-        }
-        Commands::Vacuum {
-            ref table,
-            threshold,
-        } => {
-            let config =
-                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
-            let conn_result = connection::resolve_and_validate(
-                &config,
-                cli.database_url.as_deref(),
-                cli.connection.as_deref(),
-                cli.env_var.as_deref(),
-                cli.allow_primary,
-                cli.read_write,
-                cli.quiet,
-            )?;
-
-            // Use DiagnosticSession with timeout enforcement
-            let timeout_config = parse_timeout_config(&cli)?;
-            let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
-
-            // Set up Ctrl+C handler to cancel queries gracefully
-            setup_ctrlc_handler(session.cancel_token());
-
-            // Show effective timeouts unless quiet
-            if !cli.quiet && !cli.json {
-                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
-            }
-
-            // Parse table filter if provided
-            let (schema_filter, table_filter) = if let Some(ref t) = table {
-                if let Some((s, tbl)) = t.split_once('.') {
-                    (Some(s), Some(tbl))
-                } else {
-                    (None, Some(t.as_str()))
-                }
-            } else {
-                (None, None)
+            // Determine if we need read-write access
+            let needs_write = match &dba_cmd {
+                DbaCommands::Fix { .. } => true,
+                DbaCommands::Locks { cancel, kill, .. } => cancel.is_some() || kill.is_some(),
+                _ => false,
             };
 
-            let result = commands::vacuum::run_vacuum(
-                session.client(),
-                schema_filter,
-                table_filter,
-                threshold,
-            )
-            .await?;
-
-            if cli.json {
-                commands::vacuum::print_json(&result, Some(session.effective_timeouts()))?;
-            } else {
-                commands::vacuum::print_human(&result, cli.quiet);
-            }
-
-            // Exit with appropriate code
-            match result.overall_status {
-                commands::vacuum::VacuumStatus::Critical => std::process::exit(2),
-                commands::vacuum::VacuumStatus::Warning => std::process::exit(1),
-                commands::vacuum::VacuumStatus::Healthy => {}
-            }
-        }
-        Commands::Bloat { limit } => {
+            // Common setup for all other DBA commands
             let config =
                 Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
-            let conn_result = connection::resolve_and_validate(
-                &config,
-                cli.database_url.as_deref(),
-                cli.connection.as_deref(),
-                cli.env_var.as_deref(),
-                cli.allow_primary,
-                cli.read_write,
-                cli.quiet,
-            )?;
-
-            let timeout_config = parse_timeout_config(&cli)?;
-            let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
-            setup_ctrlc_handler(session.cancel_token());
-
-            if !cli.quiet && !cli.json {
-                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
-            }
-
-            let result = commands::bloat::get_bloat(session.client(), limit).await?;
-
-            if cli.json {
-                commands::bloat::print_json(&result, Some(session.effective_timeouts()))?;
-            } else {
-                commands::bloat::print_human(&result, cli.quiet);
-            }
-
-            // Exit with appropriate code
-            match result.overall_status {
-                commands::bloat::BloatStatus::Critical => std::process::exit(2),
-                commands::bloat::BloatStatus::Warning => std::process::exit(1),
-                commands::bloat::BloatStatus::Healthy => {}
-            }
-        }
-        Commands::Replication => {
-            let config =
-                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
-            let conn_result = connection::resolve_and_validate(
-                &config,
-                cli.database_url.as_deref(),
-                cli.connection.as_deref(),
-                cli.env_var.as_deref(),
-                cli.allow_primary,
-                cli.read_write,
-                cli.quiet,
-            )?;
-
-            let timeout_config = parse_timeout_config(&cli)?;
-            let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
-            setup_ctrlc_handler(session.cancel_token());
-
-            if !cli.quiet && !cli.json {
-                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
-            }
-
-            let result = commands::replication::get_replication(session.client()).await?;
-
-            if cli.json {
-                commands::replication::print_json(&result, Some(session.effective_timeouts()))?;
-            } else {
-                commands::replication::print_human(&result, cli.quiet);
-            }
-
-            // Exit with appropriate code
-            match result.overall_status {
-                commands::replication::ReplicationStatus::Critical => std::process::exit(2),
-                commands::replication::ReplicationStatus::Warning => std::process::exit(1),
-                commands::replication::ReplicationStatus::Healthy => {}
-            }
-        }
-        Commands::Queries { ref by, limit } => {
-            let config =
-                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
-            let conn_result = connection::resolve_and_validate(
-                &config,
-                cli.database_url.as_deref(),
-                cli.connection.as_deref(),
-                cli.env_var.as_deref(),
-                cli.allow_primary,
-                cli.read_write,
-                cli.quiet,
-            )?;
-
-            let timeout_config = parse_timeout_config(&cli)?;
-            let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
-            setup_ctrlc_handler(session.cancel_token());
-
-            if !cli.quiet && !cli.json {
-                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
-            }
-
-            // Parse sort order
-            let sort_by = by
-                .as_ref()
-                .map(|s| {
-                    commands::queries::QuerySortBy::from_str(s).ok_or_else(|| {
-                        anyhow::anyhow!("Invalid --by value '{}'. Use: total, mean, calls", s)
-                    })
-                })
-                .transpose()?
-                .unwrap_or_default();
-
-            let result = commands::queries::run_queries(session.client(), sort_by, limit).await?;
-
-            if cli.json {
-                commands::queries::print_json(&result, Some(session.effective_timeouts()))?;
-            } else {
-                commands::queries::print_human(&result, cli.quiet);
-            }
-
-            // Exit with appropriate code
-            match result.overall_status {
-                commands::queries::QueryStatus::Critical => std::process::exit(2),
-                commands::queries::QueryStatus::Warning => std::process::exit(1),
-                commands::queries::QueryStatus::Healthy => {}
-            }
-        }
-        Commands::Connections {
-            by_user,
-            by_database,
-            by_application,
-        } => {
-            let config =
-                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
-            let conn_result = connection::resolve_and_validate(
-                &config,
-                cli.database_url.as_deref(),
-                cli.connection.as_deref(),
-                cli.env_var.as_deref(),
-                cli.allow_primary,
-                cli.read_write,
-                cli.quiet,
-            )?;
-
-            let timeout_config = parse_timeout_config(&cli)?;
-            let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
-            setup_ctrlc_handler(session.cancel_token());
-
-            if !cli.quiet && !cli.json {
-                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
-            }
-
-            let result = commands::connections::run_connections(
-                session.client(),
-                by_user,
-                by_database,
-                by_application,
-            )
-            .await?;
-
-            if cli.json {
-                commands::connections::print_json(&result, Some(session.effective_timeouts()))?;
-            } else {
-                commands::connections::print_human(&result, cli.quiet);
-            }
-
-            // Exit with appropriate code
-            match result.overall_status {
-                commands::connections::ConnectionStatus::Critical => std::process::exit(2),
-                commands::connections::ConnectionStatus::Warning => std::process::exit(1),
-                commands::connections::ConnectionStatus::Healthy => {}
-            }
-        }
-        Commands::Fix { ref command } => {
-            let config =
-                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
-
-            // Fix commands require read-write access
-            let conn_result = connection::resolve_and_validate(
-                &config,
-                cli.database_url.as_deref(),
-                cli.connection.as_deref(),
-                cli.env_var.as_deref(),
-                cli.allow_primary,
-                true, // Always require read-write for fix commands
-                cli.quiet,
-            )?;
-
-            let timeout_config = parse_timeout_config(&cli)?;
-            let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
-            setup_ctrlc_handler(session.cancel_token());
-
-            if !cli.quiet && !cli.json {
-                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
-            }
-
-            match command {
-                FixCommands::Sequence {
-                    sequence,
-                    upgrade_to,
-                    dry_run,
-                    yes,
-                    verify,
-                } => {
-                    // Parse sequence name
-                    let (schema, name) = if let Some((s, n)) = sequence.split_once('.') {
-                        (s, n)
-                    } else {
-                        ("public", sequence.as_str())
-                    };
-
-                    // Parse target type
-                    let target_type = commands::fix::sequence::SequenceType::from_str(upgrade_to)
-                        .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "Invalid target type '{}'. Use: integer, bigint",
-                            upgrade_to
-                        )
-                    })?;
-
-                    // Check gates
-                    if !cli.read_write && !cli.allow_primary {
-                        anyhow::bail!("Fix commands require --read-write and --primary flags");
-                    }
-
-                    let mut result = commands::fix::sequence::execute_upgrade(
-                        session.client(),
-                        schema,
-                        name,
-                        target_type,
-                        *dry_run || !*yes,
-                    )
-                    .await?;
-
-                    // Run verification if requested and fix was executed successfully
-                    if *verify && result.executed && result.success {
-                        let verify_steps = commands::fix::sequence::get_verify_steps(schema, name);
-                        let verification = commands::fix::verify::run_verification(&verify_steps);
-                        result.verification = Some(verification);
-                    }
-
-                    if cli.json {
-                        commands::fix::sequence::print_json(
-                            &result,
-                            Some(session.effective_timeouts()),
-                        )?;
-                    } else {
-                        commands::fix::sequence::print_human(&result, cli.quiet);
-                    }
-
-                    if !result.success {
-                        std::process::exit(1);
-                    }
-                }
-                FixCommands::Index {
-                    drop,
-                    dry_run,
-                    yes,
-                    verify,
-                } => {
-                    // Parse index name
-                    let (schema, name) = if let Some((s, n)) = drop.split_once('.') {
-                        (s, n)
-                    } else {
-                        ("public", drop.as_str())
-                    };
-
-                    // Check gates - index drop requires confirmation
-                    if !cli.read_write && !cli.allow_primary {
-                        anyhow::bail!("Fix commands require --read-write and --primary flags");
-                    }
-
-                    let mut result = commands::fix::index::execute_drop(
-                        session.client(),
-                        schema,
-                        name,
-                        *dry_run || !*yes,
-                    )
-                    .await?;
-
-                    // Run verification if requested and fix was executed successfully
-                    if *verify && result.executed && result.success {
-                        let verify_steps = commands::fix::index::get_verify_steps(name);
-                        let verification = commands::fix::verify::run_verification(&verify_steps);
-                        result.verification = Some(verification);
-                    }
-
-                    if cli.json {
-                        commands::fix::index::print_json(
-                            &result,
-                            Some(session.effective_timeouts()),
-                        )?;
-                    } else {
-                        commands::fix::index::print_human(&result, cli.quiet);
-                    }
-
-                    if !result.success {
-                        std::process::exit(1);
-                    }
-                }
-                FixCommands::Vacuum {
-                    table,
-                    freeze,
-                    full,
-                    analyze,
-                    dry_run,
-                    yes,
-                    verify,
-                } => {
-                    // Parse table name
-                    let (schema, name) = if let Some((s, n)) = table.split_once('.') {
-                        (s, n)
-                    } else {
-                        ("public", table.as_str())
-                    };
-
-                    // Check gates - VACUUM FULL requires confirmation
-                    if !cli.read_write && !cli.allow_primary {
-                        anyhow::bail!("Fix commands require --read-write and --primary flags");
-                    }
-                    if *full && !*yes {
-                        anyhow::bail!(
-                            "VACUUM FULL requires ACCESS EXCLUSIVE lock. Use --yes to confirm."
-                        );
-                    }
-
-                    let options = commands::fix::vacuum::VacuumOptions {
-                        freeze: *freeze,
-                        full: *full,
-                        analyze: *analyze,
-                    };
-
-                    let mut result = commands::fix::vacuum::execute_vacuum(
-                        session.client(),
-                        schema,
-                        name,
-                        &options,
-                        *dry_run || !*yes,
-                    )
-                    .await?;
-
-                    // Run verification if requested and fix was executed successfully
-                    if *verify && result.executed && result.success {
-                        let verify_steps = commands::fix::vacuum::get_verify_steps();
-                        let verification = commands::fix::verify::run_verification(&verify_steps);
-                        result.verification = Some(verification);
-                    }
-
-                    if cli.json {
-                        commands::fix::vacuum::print_json(
-                            &result,
-                            Some(session.effective_timeouts()),
-                        )?;
-                    } else {
-                        commands::fix::vacuum::print_human(&result, cli.quiet);
-                    }
-
-                    if !result.success {
-                        std::process::exit(1);
-                    }
-                }
-            }
-        }
-        Commands::Locks {
-            blocking,
-            long_tx,
-            idle_in_tx,
-            cancel,
-            kill,
-            execute,
-        } => {
-            let config =
-                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
-
-            // For cancel/kill operations, we need read-write access
-            let needs_write = cancel.is_some() || kill.is_some();
             let conn_result = connection::resolve_and_validate(
                 &config,
                 cli.database_url.as_deref(),
@@ -1735,204 +1270,515 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 cli.quiet,
             )?;
 
-            // Use DiagnosticSession with timeout enforcement
             let timeout_config = parse_timeout_config(&cli)?;
             let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
-
-            // Set up Ctrl+C handler to cancel queries gracefully
             setup_ctrlc_handler(session.cancel_token());
+
+            if !cli.quiet && !cli.json {
+                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
+            }
 
             let client = session.client();
+            let timeouts = Some(session.effective_timeouts());
 
-            // Show effective timeouts unless quiet
-            if !cli.quiet && !cli.json {
-                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
-            }
+            match dba_cmd {
+                DbaCommands::Doctor { .. } => unreachable!(), // Handled above
 
-            // Handle cancel/kill operations (redact by default)
-            let should_redact = !cli.no_redact;
-            if cli.no_redact {
-                eprintln!("pgcrate: WARNING: --no-redact disables credential redaction. Output may contain sensitive data.");
-            }
-            if let Some(pid) = cancel {
-                commands::locks::cancel_query(client, pid, execute, should_redact).await?;
-                return Ok(());
-            }
-            if let Some(pid) = kill {
-                commands::locks::terminate_connection(client, pid, execute, should_redact).await?;
-                return Ok(());
-            }
+                DbaCommands::Triage { include_fixes } => {
+                    let mut results = commands::triage::run_triage(client).await;
 
-            // Determine what to show (default: show blocking if nothing specified)
-            let show_blocking = blocking || (long_tx.is_none() && !idle_in_tx);
-            let show_long_tx = long_tx.is_some();
-            let show_idle = idle_in_tx;
+                    if include_fixes {
+                        let actions = commands::triage::generate_fix_actions(
+                            client,
+                            &results,
+                            cli.read_write,
+                            cli.allow_primary,
+                        )
+                        .await;
 
-            let mut result = commands::locks::LocksResult {
-                blocking_chains: vec![],
-                long_transactions: vec![],
-                idle_in_transaction: vec![],
-            };
-
-            if show_blocking {
-                result.blocking_chains = commands::locks::get_blocking_chains(client).await?;
-            }
-            if show_long_tx {
-                let min_minutes = long_tx.unwrap_or(5);
-                result.long_transactions =
-                    commands::locks::get_long_transactions(client, min_minutes).await?;
-            }
-            if show_idle {
-                result.idle_in_transaction =
-                    commands::locks::get_idle_in_transaction(client).await?;
-            }
-
-            // Apply redaction unless explicitly disabled (warning already printed above)
-            if should_redact {
-                result.redact();
-            }
-
-            if cli.json {
-                commands::locks::print_json(&result, Some(session.effective_timeouts()))?;
-            } else {
-                if show_blocking {
-                    commands::locks::print_blocking_chains(&result.blocking_chains, cli.quiet);
-                }
-                if show_long_tx {
-                    if show_blocking && !result.blocking_chains.is_empty() {
-                        println!();
+                        if !actions.is_empty() {
+                            results.actions = Some(actions);
+                        }
                     }
-                    commands::locks::print_long_transactions(&result.long_transactions, cli.quiet);
-                }
-                if show_idle {
-                    if (show_blocking && !result.blocking_chains.is_empty())
-                        || (show_long_tx && !result.long_transactions.is_empty())
-                    {
-                        println!();
+
+                    if cli.json {
+                        commands::triage::print_json(&results, timeouts)?;
+                    } else {
+                        commands::triage::print_human(&results, cli.quiet);
                     }
-                    commands::locks::print_idle_in_transaction(
-                        &result.idle_in_transaction,
-                        cli.quiet,
-                    );
+
+                    let exit_code = results.exit_code();
+                    if exit_code != 0 {
+                        std::process::exit(exit_code);
+                    }
                 }
-            }
-        }
-        Commands::Xid { tables } => {
-            let config =
-                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
-            let conn_result = connection::resolve_and_validate(
-                &config,
-                cli.database_url.as_deref(),
-                cli.connection.as_deref(),
-                cli.env_var.as_deref(),
-                cli.allow_primary,
-                cli.read_write,
-                cli.quiet,
-            )?;
 
-            // Use DiagnosticSession with timeout enforcement
-            let timeout_config = parse_timeout_config(&cli)?;
-            let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
+                DbaCommands::Vacuum { ref table, threshold } => {
+                    let (schema_filter, table_filter) = if let Some(ref t) = table {
+                        if let Some((s, tbl)) = t.split_once('.') {
+                            (Some(s), Some(tbl))
+                        } else {
+                            (None, Some(t.as_str()))
+                        }
+                    } else {
+                        (None, None)
+                    };
 
-            // Set up Ctrl+C handler to cancel queries gracefully
-            setup_ctrlc_handler(session.cancel_token());
-
-            // Show effective timeouts unless quiet
-            if !cli.quiet && !cli.json {
-                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
-            }
-
-            let result = commands::xid::run_xid(session.client(), tables).await?;
-
-            if cli.json {
-                commands::xid::print_json(&result, Some(session.effective_timeouts()))?;
-            } else {
-                commands::xid::print_human(&result);
-            }
-
-            // Exit with appropriate code
-            match result.overall_status {
-                commands::xid::XidStatus::Critical => std::process::exit(2),
-                commands::xid::XidStatus::Warning => std::process::exit(1),
-                commands::xid::XidStatus::Healthy => {}
-            }
-        }
-        Commands::Sequences { warn, crit, all } => {
-            let config =
-                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
-            let conn_result = connection::resolve_and_validate(
-                &config,
-                cli.database_url.as_deref(),
-                cli.connection.as_deref(),
-                cli.env_var.as_deref(),
-                cli.allow_primary,
-                cli.read_write,
-                cli.quiet,
-            )?;
-
-            // Use DiagnosticSession with timeout enforcement
-            let timeout_config = parse_timeout_config(&cli)?;
-            let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
-
-            // Set up Ctrl+C handler to cancel queries gracefully
-            setup_ctrlc_handler(session.cancel_token());
-
-            // Show effective timeouts unless quiet
-            if !cli.quiet && !cli.json {
-                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
-            }
-
-            let result = commands::sequences::run_sequences(session.client(), warn, crit).await?;
-
-            if cli.json {
-                commands::sequences::print_json(&result, Some(session.effective_timeouts()))?;
-            } else {
-                commands::sequences::print_human(&result, cli.quiet, all);
-            }
-
-            // Exit with appropriate code
-            match result.overall_status {
-                commands::sequences::SeqStatus::Critical => std::process::exit(2),
-                commands::sequences::SeqStatus::Warning => std::process::exit(1),
-                commands::sequences::SeqStatus::Healthy => {}
-            }
-        }
-        Commands::Indexes {
-            missing_limit,
-            unused_limit,
-        } => {
-            let config =
-                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
-            let conn_result = connection::resolve_and_validate(
-                &config,
-                cli.database_url.as_deref(),
-                cli.connection.as_deref(),
-                cli.env_var.as_deref(),
-                cli.allow_primary,
-                cli.read_write,
-                cli.quiet,
-            )?;
-
-            // Use DiagnosticSession with timeout enforcement
-            let timeout_config = parse_timeout_config(&cli)?;
-            let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
-
-            // Set up Ctrl+C handler to cancel queries gracefully
-            setup_ctrlc_handler(session.cancel_token());
-
-            // Show effective timeouts unless quiet
-            if !cli.quiet && !cli.json {
-                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
-            }
-
-            let result =
-                commands::indexes::run_indexes(session.client(), missing_limit, unused_limit)
+                    let result = commands::vacuum::run_vacuum(
+                        client,
+                        schema_filter,
+                        table_filter,
+                        threshold,
+                    )
                     .await?;
 
-            if cli.json {
-                commands::indexes::print_json(&result, Some(session.effective_timeouts()))?;
-            } else {
-                commands::indexes::print_human(&result, cli.verbose);
+                    if cli.json {
+                        commands::vacuum::print_json(&result, timeouts)?;
+                    } else {
+                        commands::vacuum::print_human(&result, cli.quiet);
+                    }
+
+                    match result.overall_status {
+                        commands::vacuum::VacuumStatus::Critical => std::process::exit(2),
+                        commands::vacuum::VacuumStatus::Warning => std::process::exit(1),
+                        commands::vacuum::VacuumStatus::Healthy => {}
+                    }
+                }
+
+                DbaCommands::Bloat { limit } => {
+                    let result = commands::bloat::get_bloat(client, limit).await?;
+
+                    if cli.json {
+                        commands::bloat::print_json(&result, timeouts)?;
+                    } else {
+                        commands::bloat::print_human(&result, cli.quiet);
+                    }
+
+                    match result.overall_status {
+                        commands::bloat::BloatStatus::Critical => std::process::exit(2),
+                        commands::bloat::BloatStatus::Warning => std::process::exit(1),
+                        commands::bloat::BloatStatus::Healthy => {}
+                    }
+                }
+
+                DbaCommands::Replication => {
+                    let result = commands::replication::get_replication(client).await?;
+
+                    if cli.json {
+                        commands::replication::print_json(&result, timeouts)?;
+                    } else {
+                        commands::replication::print_human(&result, cli.quiet);
+                    }
+
+                    match result.overall_status {
+                        commands::replication::ReplicationStatus::Critical => std::process::exit(2),
+                        commands::replication::ReplicationStatus::Warning => std::process::exit(1),
+                        commands::replication::ReplicationStatus::Healthy => {}
+                    }
+                }
+
+                DbaCommands::Queries { ref by, limit } => {
+                    let sort_by = by
+                        .as_ref()
+                        .map(|s| {
+                            commands::queries::QuerySortBy::from_str(s).ok_or_else(|| {
+                                anyhow::anyhow!("Invalid --by value '{}'. Use: total, mean, calls", s)
+                            })
+                        })
+                        .transpose()?
+                        .unwrap_or_default();
+
+                    let result = commands::queries::run_queries(client, sort_by, limit).await?;
+
+                    if cli.json {
+                        commands::queries::print_json(&result, timeouts)?;
+                    } else {
+                        commands::queries::print_human(&result, cli.quiet);
+                    }
+
+                    match result.overall_status {
+                        commands::queries::QueryStatus::Critical => std::process::exit(2),
+                        commands::queries::QueryStatus::Warning => std::process::exit(1),
+                        commands::queries::QueryStatus::Healthy => {}
+                    }
+                }
+
+                DbaCommands::Connections {
+                    by_user,
+                    by_database,
+                    by_application,
+                } => {
+                    let result = commands::connections::run_connections(
+                        client,
+                        by_user,
+                        by_database,
+                        by_application,
+                    )
+                    .await?;
+
+                    if cli.json {
+                        commands::connections::print_json(&result, timeouts)?;
+                    } else {
+                        commands::connections::print_human(&result, cli.quiet);
+                    }
+
+                    match result.overall_status {
+                        commands::connections::ConnectionStatus::Critical => std::process::exit(2),
+                        commands::connections::ConnectionStatus::Warning => std::process::exit(1),
+                        commands::connections::ConnectionStatus::Healthy => {}
+                    }
+                }
+
+                DbaCommands::Fix { ref command } => {
+                    match command {
+                        FixCommands::Sequence {
+                            sequence,
+                            upgrade_to,
+                            dry_run,
+                            yes,
+                            verify,
+                        } => {
+                            let (schema, name) = if let Some((s, n)) = sequence.split_once('.') {
+                                (s, n)
+                            } else {
+                                ("public", sequence.as_str())
+                            };
+
+                            let target_type = commands::fix::sequence::SequenceType::from_str(upgrade_to)
+                                .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "Invalid target type '{}'. Use: integer, bigint",
+                                    upgrade_to
+                                )
+                            })?;
+
+                            if !cli.read_write && !cli.allow_primary {
+                                anyhow::bail!("Fix commands require --read-write and --primary flags");
+                            }
+
+                            let mut result = commands::fix::sequence::execute_upgrade(
+                                client,
+                                schema,
+                                name,
+                                target_type,
+                                *dry_run || !*yes,
+                            )
+                            .await?;
+
+                            if *verify && result.executed && result.success {
+                                let verify_steps = commands::fix::sequence::get_verify_steps(schema, name);
+                                let verification = commands::fix::verify::run_verification(&verify_steps);
+                                result.verification = Some(verification);
+                            }
+
+                            if cli.json {
+                                commands::fix::sequence::print_json(&result, timeouts)?;
+                            } else {
+                                commands::fix::sequence::print_human(&result, cli.quiet);
+                            }
+
+                            if !result.success {
+                                std::process::exit(1);
+                            }
+                        }
+                        FixCommands::Index {
+                            drop,
+                            dry_run,
+                            yes,
+                            verify,
+                        } => {
+                            let (schema, name) = if let Some((s, n)) = drop.split_once('.') {
+                                (s, n)
+                            } else {
+                                ("public", drop.as_str())
+                            };
+
+                            if !cli.read_write && !cli.allow_primary {
+                                anyhow::bail!("Fix commands require --read-write and --primary flags");
+                            }
+
+                            let mut result = commands::fix::index::execute_drop(
+                                client,
+                                schema,
+                                name,
+                                *dry_run || !*yes,
+                            )
+                            .await?;
+
+                            if *verify && result.executed && result.success {
+                                let verify_steps = commands::fix::index::get_verify_steps(name);
+                                let verification = commands::fix::verify::run_verification(&verify_steps);
+                                result.verification = Some(verification);
+                            }
+
+                            if cli.json {
+                                commands::fix::index::print_json(&result, timeouts)?;
+                            } else {
+                                commands::fix::index::print_human(&result, cli.quiet);
+                            }
+
+                            if !result.success {
+                                std::process::exit(1);
+                            }
+                        }
+                        FixCommands::Vacuum {
+                            table,
+                            freeze,
+                            full,
+                            analyze,
+                            dry_run,
+                            yes,
+                            verify,
+                        } => {
+                            let (schema, name) = if let Some((s, n)) = table.split_once('.') {
+                                (s, n)
+                            } else {
+                                ("public", table.as_str())
+                            };
+
+                            if !cli.read_write && !cli.allow_primary {
+                                anyhow::bail!("Fix commands require --read-write and --primary flags");
+                            }
+                            if *full && !*yes {
+                                anyhow::bail!(
+                                    "VACUUM FULL requires ACCESS EXCLUSIVE lock. Use --yes to confirm."
+                                );
+                            }
+
+                            let options = commands::fix::vacuum::VacuumOptions {
+                                freeze: *freeze,
+                                full: *full,
+                                analyze: *analyze,
+                            };
+
+                            let mut result = commands::fix::vacuum::execute_vacuum(
+                                client,
+                                schema,
+                                name,
+                                &options,
+                                *dry_run || !*yes,
+                            )
+                            .await?;
+
+                            if *verify && result.executed && result.success {
+                                let verify_steps = commands::fix::vacuum::get_verify_steps();
+                                let verification = commands::fix::verify::run_verification(&verify_steps);
+                                result.verification = Some(verification);
+                            }
+
+                            if cli.json {
+                                commands::fix::vacuum::print_json(&result, timeouts)?;
+                            } else {
+                                commands::fix::vacuum::print_human(&result, cli.quiet);
+                            }
+
+                            if !result.success {
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                }
+
+                DbaCommands::Locks {
+                    blocking,
+                    long_tx,
+                    idle_in_tx,
+                    cancel,
+                    kill,
+                    execute,
+                } => {
+                    // Handle cancel/kill operations (redact by default)
+                    let should_redact = !cli.no_redact;
+                    if cli.no_redact {
+                        eprintln!("pgcrate: WARNING: --no-redact disables credential redaction. Output may contain sensitive data.");
+                    }
+                    if let Some(pid) = cancel {
+                        commands::locks::cancel_query(client, pid, execute, should_redact).await?;
+                        return Ok(());
+                    }
+                    if let Some(pid) = kill {
+                        commands::locks::terminate_connection(client, pid, execute, should_redact).await?;
+                        return Ok(());
+                    }
+
+                    // Determine what to show (default: show blocking if nothing specified)
+                    let show_blocking = blocking || (long_tx.is_none() && !idle_in_tx);
+                    let show_long_tx = long_tx.is_some();
+                    let show_idle = idle_in_tx;
+
+                    let mut result = commands::locks::LocksResult {
+                        blocking_chains: vec![],
+                        long_transactions: vec![],
+                        idle_in_transaction: vec![],
+                    };
+
+                    if show_blocking {
+                        result.blocking_chains = commands::locks::get_blocking_chains(client).await?;
+                    }
+                    if show_long_tx {
+                        let min_minutes = long_tx.unwrap_or(5);
+                        result.long_transactions =
+                            commands::locks::get_long_transactions(client, min_minutes).await?;
+                    }
+                    if show_idle {
+                        result.idle_in_transaction =
+                            commands::locks::get_idle_in_transaction(client).await?;
+                    }
+
+                    if should_redact {
+                        result.redact();
+                    }
+
+                    if cli.json {
+                        commands::locks::print_json(&result, timeouts)?;
+                    } else {
+                        if show_blocking {
+                            commands::locks::print_blocking_chains(&result.blocking_chains, cli.quiet);
+                        }
+                        if show_long_tx {
+                            if show_blocking && !result.blocking_chains.is_empty() {
+                                println!();
+                            }
+                            commands::locks::print_long_transactions(&result.long_transactions, cli.quiet);
+                        }
+                        if show_idle {
+                            if (show_blocking && !result.blocking_chains.is_empty())
+                                || (show_long_tx && !result.long_transactions.is_empty())
+                            {
+                                println!();
+                            }
+                            commands::locks::print_idle_in_transaction(
+                                &result.idle_in_transaction,
+                                cli.quiet,
+                            );
+                        }
+                    }
+                }
+
+                DbaCommands::Xid { tables } => {
+                    let result = commands::xid::run_xid(client, tables).await?;
+
+                    if cli.json {
+                        commands::xid::print_json(&result, timeouts)?;
+                    } else {
+                        commands::xid::print_human(&result);
+                    }
+
+                    match result.overall_status {
+                        commands::xid::XidStatus::Critical => std::process::exit(2),
+                        commands::xid::XidStatus::Warning => std::process::exit(1),
+                        commands::xid::XidStatus::Healthy => {}
+                    }
+                }
+
+                DbaCommands::Sequences { warn, crit, all } => {
+                    let result = commands::sequences::run_sequences(client, warn, crit).await?;
+
+                    if cli.json {
+                        commands::sequences::print_json(&result, timeouts)?;
+                    } else {
+                        commands::sequences::print_human(&result, cli.quiet, all);
+                    }
+
+                    match result.overall_status {
+                        commands::sequences::SeqStatus::Critical => std::process::exit(2),
+                        commands::sequences::SeqStatus::Warning => std::process::exit(1),
+                        commands::sequences::SeqStatus::Healthy => {}
+                    }
+                }
+
+                DbaCommands::Indexes {
+                    missing_limit,
+                    unused_limit,
+                } => {
+                    let result =
+                        commands::indexes::run_indexes(client, missing_limit, unused_limit).await?;
+
+                    if cli.json {
+                        commands::indexes::print_json(&result, timeouts)?;
+                    } else {
+                        commands::indexes::print_human(&result, cli.verbose);
+                    }
+                }
+            }
+        }
+        Commands::Inspect { command } => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
+
+            match command {
+                InspectCommands::Table {
+                    object,
+                    dependents,
+                    dependencies,
+                    no_stats,
+                } => {
+                    commands::describe(
+                        &conn_result.url,
+                        &object,
+                        dependents,
+                        dependencies,
+                        no_stats,
+                        cli.verbose,
+                        output,
+                    )
+                    .await?;
+                }
+                InspectCommands::Diff {
+                    from,
+                    to,
+                    schemas,
+                    exclude_schemas,
+                } => {
+                    let exit_code = commands::diff(
+                        from.as_deref().unwrap_or(&conn_result.url),
+                        &to,
+                        output,
+                        &schemas,
+                        &exclude_schemas,
+                    )
+                    .await?;
+                    if exit_code != 0 {
+                        std::process::exit(exit_code);
+                    }
+                }
+                InspectCommands::Extensions { available } => {
+                    commands::extension_list(&conn_result.url, available, cli.quiet).await?;
+                }
+                InspectCommands::Roles {
+                    users,
+                    groups,
+                    describe,
+                } => {
+                    if let Some(name) = describe {
+                        commands::role_describe(&conn_result.url, &name, cli.quiet).await?;
+                    } else {
+                        commands::role_list(&conn_result.url, users, groups, cli.quiet).await?;
+                    }
+                }
+                InspectCommands::Grants {
+                    object,
+                    schema,
+                    role,
+                } => {
+                    commands::grants(
+                        &conn_result.url,
+                        object.as_deref(),
+                        schema.as_deref(),
+                        role.as_deref(),
+                        cli.quiet,
+                    )
+                    .await?;
+                }
             }
         }
         Commands::Context => {
@@ -2221,73 +2067,6 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
             )
             .await?;
         }
-        Commands::Extension { command } => {
-            let config =
-                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
-            let conn_result = connection::resolve_and_validate(
-                &config,
-                cli.database_url.as_deref(),
-                cli.connection.as_deref(),
-                cli.env_var.as_deref(),
-                cli.allow_primary,
-                cli.read_write,
-                cli.quiet,
-            )?;
-
-            match command {
-                ExtensionCommands::List { available } => {
-                    commands::extension_list(&conn_result.url, available, cli.quiet).await?;
-                }
-            }
-        }
-        Commands::Role { command } => {
-            let config =
-                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
-            let conn_result = connection::resolve_and_validate(
-                &config,
-                cli.database_url.as_deref(),
-                cli.connection.as_deref(),
-                cli.env_var.as_deref(),
-                cli.allow_primary,
-                cli.read_write,
-                cli.quiet,
-            )?;
-
-            match command {
-                RoleCommands::List { users, groups } => {
-                    commands::role_list(&conn_result.url, users, groups, cli.quiet).await?;
-                }
-                RoleCommands::Describe { name } => {
-                    commands::role_describe(&conn_result.url, &name, cli.quiet).await?;
-                }
-            }
-        }
-        Commands::Grants {
-            object,
-            schema,
-            role,
-        } => {
-            let config =
-                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
-            let conn_result = connection::resolve_and_validate(
-                &config,
-                cli.database_url.as_deref(),
-                cli.connection.as_deref(),
-                cli.env_var.as_deref(),
-                cli.allow_primary,
-                cli.read_write,
-                cli.quiet,
-            )?;
-
-            commands::grants(
-                &conn_result.url,
-                object.as_deref(),
-                schema.as_deref(),
-                role.as_deref(),
-                cli.quiet,
-            )
-            .await?;
-        }
         Commands::Status => {
             let config =
                 Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
@@ -2338,56 +2117,11 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                     )
                     .await?;
                 }
-                Commands::Diff {
-                    from,
-                    to,
-                    schemas,
-                    exclude_schemas,
-                } => {
-                    let exit_code = commands::diff(
-                        from.as_deref().unwrap_or(&conn_result.url),
-                        &to,
-                        output,
-                        &schemas,
-                        &exclude_schemas,
-                    )
-                    .await?;
-                    if exit_code != 0 {
-                        std::process::exit(exit_code);
-                    }
-                }
-                Commands::Describe {
-                    object,
-                    dependents,
-                    dependencies,
-                    no_stats,
-                } => {
-                    commands::describe(
-                        &conn_result.url,
-                        &object,
-                        dependents,
-                        dependencies,
-                        no_stats,
-                        cli.verbose,
-                        output,
-                    )
-                    .await?;
-                }
                 Commands::Migrate { .. }
                 | Commands::Model { .. }
                 | Commands::Init { .. }
-                | Commands::Doctor { .. }
-                | Commands::Triage { .. }
-                | Commands::Locks { .. }
-                | Commands::Xid { .. }
-                | Commands::Sequences { .. }
-                | Commands::Indexes { .. }
-                | Commands::Vacuum { .. }
-                | Commands::Bloat { .. }
-                | Commands::Replication
-                | Commands::Queries { .. }
-                | Commands::Connections { .. }
-                | Commands::Fix { .. }
+                | Commands::Dba { .. }
+                | Commands::Inspect { .. }
                 | Commands::Context
                 | Commands::Capabilities
                 | Commands::Sql { .. }
@@ -2397,9 +2131,6 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 | Commands::Anonymize { .. }
                 | Commands::Seed { .. }
                 | Commands::Bootstrap { .. }
-                | Commands::Extension { .. }
-                | Commands::Role { .. }
-                | Commands::Grants { .. }
                 | Commands::Status => unreachable!(),
             }
         }

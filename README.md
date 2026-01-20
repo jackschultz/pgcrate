@@ -108,47 +108,44 @@ FROM app.orders
 GROUP BY user_id
 ```
 
-### Schema Introspection
+### Schema Inspection (`pgcrate inspect`)
 
 ```bash
-pgcrate generate              # Generate migration from existing DB
-pgcrate describe users        # Deep table inspection (includes RLS policies)
-pgcrate diff --from db1 --to db2  # Compare two databases
+pgcrate generate                      # Generate migration from existing DB
+pgcrate inspect table users           # Deep table inspection (includes RLS policies)
+pgcrate inspect diff --from db1 --to db2  # Compare two databases
+pgcrate inspect roles                 # Show roles with attributes and memberships
+pgcrate inspect roles --users         # Filter to login roles only
+pgcrate inspect roles --describe myuser  # Detailed role info including owned objects
+pgcrate inspect grants users          # Who can SELECT/INSERT/UPDATE/DELETE
+pgcrate inspect grants --schema public  # All grants in a schema
+pgcrate inspect grants --role myuser  # What can this role access?
+pgcrate inspect extensions            # Installed extensions
+pgcrate inspect extensions --available  # Extensions available to install
 ```
 
-### Roles & Permissions
-
-```bash
-pgcrate role list             # Show roles with attributes and memberships
-pgcrate role list --users     # Filter to login roles only
-pgcrate role describe <role>  # Detailed role info including owned objects
-pgcrate grants <table>        # Who can SELECT/INSERT/UPDATE/DELETE
-pgcrate grants --schema public  # All grants in a schema
-pgcrate grants --role myuser  # What can this role access?
-pgcrate extension list        # Installed extensions
-pgcrate extension list --available  # Extensions available to install
-```
-
-### Diagnostics
+### DBA Diagnostics (`pgcrate dba`)
 
 Agent-friendly health checks with JSON output for automation:
 
 ```bash
-pgcrate triage                        # Quick health overview (locks, xid, sequences)
-pgcrate triage --include-fixes --json # Include recommended fix actions
+pgcrate dba                           # Quick health overview (alias for triage)
+pgcrate dba triage                    # Quick health overview (locks, xid, sequences)
+pgcrate dba triage --include-fixes --json # Include recommended fix actions
 pgcrate context --json                # Connection context, server info, privileges
 pgcrate capabilities --json           # What can this connection do?
-pgcrate locks                         # Blocking locks and long transactions
-pgcrate xid                           # Transaction ID wraparound analysis
-pgcrate sequences                     # Sequence exhaustion check
-pgcrate indexes                       # Missing, unused, duplicate indexes
-pgcrate vacuum                        # Table bloat and vacuum health
-pgcrate bloat                         # Estimate table and index bloat
-pgcrate replication                   # Streaming replication health
-pgcrate queries                       # Top queries (requires pg_stat_statements)
-pgcrate queries --by mean             # Sort by mean execution time
-pgcrate connections                   # Connection usage vs max_connections
-pgcrate connections --by-user         # Group by user
+pgcrate dba locks                     # Blocking locks and long transactions
+pgcrate dba xid                       # Transaction ID wraparound analysis
+pgcrate dba sequences                 # Sequence exhaustion check
+pgcrate dba indexes                   # Missing, unused, duplicate indexes
+pgcrate dba vacuum                    # Table bloat and vacuum health
+pgcrate dba bloat                     # Estimate table and index bloat
+pgcrate dba replication               # Streaming replication health
+pgcrate dba queries                   # Top queries (requires pg_stat_statements)
+pgcrate dba queries --by mean         # Sort by mean execution time
+pgcrate dba connections               # Connection usage vs max_connections
+pgcrate dba connections --by-user     # Group by user
+pgcrate dba doctor                    # Health checks for CI
 ```
 
 All diagnostic commands support timeout flags for production safety:
@@ -156,24 +153,24 @@ All diagnostic commands support timeout flags for production safety:
 - `--statement-timeout <ms>` - Query timeout (default: 30000ms)
 - `--lock-timeout <ms>` - Lock wait timeout (default: 500ms)
 
-### Fix Commands
+### Fix Commands (`pgcrate dba fix`)
 
 Safe remediation for issues found by diagnostics:
 
 ```bash
 # Sequence fixes (prevent exhaustion)
-pgcrate fix sequence public.order_seq --upgrade-to bigint --dry-run
-pgcrate fix sequence public.order_seq --upgrade-to bigint --yes
+pgcrate dba fix sequence public.order_seq --upgrade-to bigint --dry-run
+pgcrate dba fix sequence public.order_seq --upgrade-to bigint --yes
 
 # Index fixes (remove unused indexes)
-pgcrate fix index --drop public.idx_unused --dry-run
-pgcrate fix index --drop public.idx_unused --yes
+pgcrate dba fix index --drop public.idx_unused --dry-run
+pgcrate dba fix index --drop public.idx_unused --yes
 
 # Vacuum fixes (reclaim space)
-pgcrate fix vacuum public.orders --dry-run
-pgcrate fix vacuum public.orders --yes
-pgcrate fix vacuum public.orders --full --yes    # ACCESS EXCLUSIVE lock
-pgcrate fix vacuum public.orders --analyze --yes # Update statistics
+pgcrate dba fix vacuum public.orders --dry-run
+pgcrate dba fix vacuum public.orders --yes
+pgcrate dba fix vacuum public.orders --full --yes    # ACCESS EXCLUSIVE lock
+pgcrate dba fix vacuum public.orders --analyze --yes # Update statistics
 ```
 
 **Gate flags required for fix commands:**
@@ -188,7 +185,7 @@ pgcrate fix vacuum public.orders --analyze --yes # Update statistics
 
 Fix commands include evidence collection, safety checks, and optional verification:
 ```bash
-pgcrate --read-write --primary fix sequence public.order_seq --upgrade-to bigint --yes --verify
+pgcrate --read-write --primary dba fix sequence public.order_seq --upgrade-to bigint --yes --verify
 ```
 
 ### Data Operations
@@ -202,7 +199,6 @@ pgcrate snapshot restore <name> --yes # Restore database state
 pgcrate snapshot list                 # List all snapshots
 pgcrate snapshot info <name>          # Show snapshot details
 pgcrate snapshot delete <name> --yes  # Delete a snapshot
-pgcrate doctor                        # Health checks for CI
 ```
 
 ### CI/CD Integration
@@ -210,12 +206,12 @@ pgcrate doctor                        # Health checks for CI
 Commands support `--json` for machine-readable output with versioned schemas:
 
 ```bash
-pgcrate migrate status --json     # JSON migration status
-pgcrate triage --json             # JSON health check with severity
-pgcrate context --json            # JSON connection/server info
-pgcrate capabilities --json       # JSON capability discovery
-pgcrate diff --from $PROD --to $DEV --json  # JSON diff
-pgcrate snapshot list --json      # JSON snapshot list
+pgcrate migrate status --json         # JSON migration status
+pgcrate dba triage --json             # JSON health check with severity
+pgcrate context --json                # JSON connection/server info
+pgcrate capabilities --json           # JSON capability discovery
+pgcrate inspect diff --from $PROD --to $DEV --json  # JSON diff
+pgcrate snapshot list --json          # JSON snapshot list
 ```
 
 JSON output uses a consistent envelope:
@@ -224,7 +220,7 @@ JSON output uses a consistent envelope:
   "ok": true,
   "schema_id": "pgcrate.diagnostics.triage",
   "schema_version": "2.0.0",
-  "tool_version": "0.3.0",
+  "tool_version": "0.4.0",
   "generated_at": "2026-01-19T12:00:00Z",
   "severity": "warning",
   "data": { ... }
