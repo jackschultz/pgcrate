@@ -679,6 +679,23 @@ enum FixCommands {
         #[arg(long)]
         verify: bool,
     },
+    /// Rebuild bloated index via REINDEX
+    Bloat {
+        /// Index to reindex (schema.index)
+        index: String,
+        /// Use blocking REINDEX instead of CONCURRENTLY (not recommended)
+        #[arg(long)]
+        blocking: bool,
+        /// Show what would be done without executing
+        #[arg(long)]
+        dry_run: bool,
+        /// Confirm execution (required for fixes)
+        #[arg(long)]
+        yes: bool,
+        /// Run verification after fix
+        #[arg(long)]
+        verify: bool,
+    },
 }
 
 /// DBA diagnostic and remediation commands
@@ -1667,6 +1684,54 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                             commands::fix::vacuum::print_json(&result, timeouts)?;
                         } else {
                             commands::fix::vacuum::print_human(&result, cli.quiet);
+                        }
+
+                        if !result.success {
+                            std::process::exit(1);
+                        }
+                    }
+                    FixCommands::Bloat {
+                        index,
+                        blocking,
+                        dry_run,
+                        yes,
+                        verify,
+                    } => {
+                        let (schema, name) = if let Some((s, n)) = index.split_once('.') {
+                            (s, n)
+                        } else {
+                            ("public", index.as_str())
+                        };
+
+                        if !cli.read_write || !cli.allow_primary {
+                            anyhow::bail!("Fix commands require --read-write and --primary flags");
+                        }
+                        if !*yes && !*dry_run {
+                            anyhow::bail!(
+                                "REINDEX requires confirmation. Use --yes to confirm or --dry-run to preview."
+                            );
+                        }
+
+                        let mut result = commands::fix::bloat::execute_reindex(
+                            client,
+                            schema,
+                            name,
+                            *dry_run || !*yes,
+                            *blocking,
+                        )
+                        .await?;
+
+                        if *verify && result.executed && result.success {
+                            let verify_steps = commands::fix::bloat::get_verify_steps(schema, name);
+                            let verification =
+                                commands::fix::verify::run_verification(&verify_steps);
+                            result.verification = Some(verification);
+                        }
+
+                        if cli.json {
+                            commands::fix::bloat::print_json(&result, timeouts)?;
+                        } else {
+                            commands::fix::bloat::print_human(&result, cli.quiet);
                         }
 
                         if !result.success {
