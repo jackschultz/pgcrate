@@ -8,6 +8,8 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tokio_postgres::Client;
 
+use super::fix::common::{ActionGates, ActionType, Risk, StructuredAction};
+
 /// Issue severity levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -83,6 +85,9 @@ pub struct ExplainResult {
     pub issues: Vec<PlanIssue>,
     pub recommendations: Vec<Recommendation>,
     pub stats: PlanStats,
+    /// Structured fix actions (when --include-actions is used)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actions: Option<Vec<StructuredAction>>,
 }
 
 /// PostgreSQL EXPLAIN JSON format (simplified)
@@ -228,6 +233,7 @@ pub async fn run_explain(client: &Client, query: &str, analyze: bool) -> Result<
         issues,
         recommendations,
         stats,
+        actions: None,
     })
 }
 
@@ -495,6 +501,86 @@ pub fn print_json(
     Ok(())
 }
 
+/// Extract index name from CREATE INDEX SQL statement.
+///
+/// Handles variations: CREATE INDEX, CREATE UNIQUE INDEX, CREATE INDEX CONCURRENTLY,
+/// CREATE INDEX IF NOT EXISTS, etc.
+fn extract_index_name_from_sql(sql: &str, fallback_idx: usize) -> String {
+    let tokens: Vec<&str> = sql.split_whitespace().collect();
+
+    // Find position after INDEX keyword, skipping UNIQUE/CONCURRENTLY/IF NOT EXISTS
+    let mut i = 0;
+    while i < tokens.len() {
+        let upper_token = tokens[i].to_uppercase();
+        if upper_token == "INDEX" {
+            i += 1;
+            // Skip optional keywords after INDEX
+            while i < tokens.len() {
+                let next_upper = tokens[i].to_uppercase();
+                if next_upper == "CONCURRENTLY"
+                    || next_upper == "IF"
+                    || next_upper == "NOT"
+                    || next_upper == "EXISTS"
+                {
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            // tokens[i] should now be the index name
+            if i < tokens.len() && !tokens[i].to_uppercase().starts_with("ON") {
+                return tokens[i].to_string();
+            }
+            break;
+        }
+        i += 1;
+    }
+
+    // Fallback if parsing fails
+    format!("idx_{}", fallback_idx)
+}
+
+/// Generate structured actions from explain recommendations.
+///
+/// Converts CreateIndex recommendations with SQL into StructuredAction objects
+/// that can be consumed by automation tools.
+pub fn generate_actions(
+    result: &ExplainResult,
+    read_write: bool,
+    is_primary: bool,
+) -> Vec<StructuredAction> {
+    let mut actions = Vec::new();
+
+    for (idx, rec) in result.recommendations.iter().enumerate() {
+        // Only CreateIndex recommendations with concrete SQL become actions.
+        // ConsiderIndex requires human analysis, ReviewQuery is informational.
+        if !matches!(rec.recommendation_type, RecommendationType::CreateIndex) {
+            continue;
+        }
+
+        let Some(ref sql) = rec.sql else {
+            continue;
+        };
+
+        let index_name = extract_index_name_from_sql(sql, idx);
+        let action_id = format!("explain.index.create.{}", index_name);
+
+        let action = StructuredAction::builder(action_id, ActionType::Fix)
+            .command("pgcrate")
+            .args(vec!["sql".to_string(), sql.clone()])
+            .description(rec.rationale.clone())
+            .mutates(true)
+            .risk(Risk::Low)
+            .gates(ActionGates::write_primary())
+            .sql_preview(vec![sql.clone()])
+            .build(read_write, is_primary, false); // Require confirmation for DDL
+
+        actions.push(action);
+    }
+
+    actions
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -533,5 +619,130 @@ mod tests {
             column: None,
         };
         assert_eq!(issue.severity, IssueSeverity::Critical);
+    }
+
+    fn test_result_with_recommendations(recommendations: Vec<Recommendation>) -> ExplainResult {
+        ExplainResult {
+            query: "SELECT * FROM users".to_string(),
+            plan_text: "Seq Scan on users".to_string(),
+            plan_json: serde_json::json!([]),
+            analyzed: false,
+            issues: vec![],
+            recommendations,
+            stats: PlanStats {
+                estimated_startup_cost: 0.0,
+                estimated_total_cost: 100.0,
+                estimated_rows: 1000,
+                actual_time_ms: None,
+                actual_rows: None,
+                actual_loops: None,
+            },
+            actions: None,
+        }
+    }
+
+    #[test]
+    fn test_generate_actions_create_index() {
+        let rec = Recommendation {
+            recommendation_type: RecommendationType::CreateIndex,
+            sql: Some("CREATE INDEX idx_users_email ON public.users(email);".to_string()),
+            rationale: "Index on email could convert Seq Scan to Index Scan".to_string(),
+        };
+        let result = test_result_with_recommendations(vec![rec]);
+
+        let actions = generate_actions(&result, true, true);
+
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].action_id, "explain.index.create.idx_users_email");
+        assert!(actions[0].available);
+        assert!(actions[0].mutates);
+        assert!(actions[0].sql_preview.is_some());
+    }
+
+    #[test]
+    fn test_generate_actions_consider_index_skipped() {
+        let rec = Recommendation {
+            recommendation_type: RecommendationType::ConsiderIndex,
+            sql: None,
+            rationale: "Consider adding an index".to_string(),
+        };
+        let result = test_result_with_recommendations(vec![rec]);
+
+        let actions = generate_actions(&result, true, true);
+
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn test_generate_actions_blocked_without_write() {
+        let rec = Recommendation {
+            recommendation_type: RecommendationType::CreateIndex,
+            sql: Some("CREATE INDEX idx_users_email ON public.users(email);".to_string()),
+            rationale: "Index on email".to_string(),
+        };
+        let result = test_result_with_recommendations(vec![rec]);
+
+        let actions = generate_actions(&result, false, true);
+
+        assert_eq!(actions.len(), 1);
+        assert!(!actions[0].available);
+        assert!(actions[0].blocked_reason.is_some());
+    }
+
+    #[test]
+    fn test_generate_actions_multiple_indexes() {
+        let recs = vec![
+            Recommendation {
+                recommendation_type: RecommendationType::CreateIndex,
+                sql: Some("CREATE INDEX idx_users_email ON users(email);".to_string()),
+                rationale: "Index on email".to_string(),
+            },
+            Recommendation {
+                recommendation_type: RecommendationType::CreateIndex,
+                sql: Some("CREATE INDEX idx_users_status ON users(status);".to_string()),
+                rationale: "Index on status".to_string(),
+            },
+        ];
+        let result = test_result_with_recommendations(recs);
+        let actions = generate_actions(&result, true, true);
+
+        assert_eq!(actions.len(), 2);
+        // Verify unique action IDs
+        assert_ne!(actions[0].action_id, actions[1].action_id);
+        assert_eq!(actions[0].action_id, "explain.index.create.idx_users_email");
+        assert_eq!(
+            actions[1].action_id,
+            "explain.index.create.idx_users_status"
+        );
+    }
+
+    #[test]
+    fn test_extract_index_name_concurrently() {
+        assert_eq!(
+            extract_index_name_from_sql("CREATE INDEX CONCURRENTLY idx_foo ON bar(col);", 0),
+            "idx_foo"
+        );
+    }
+
+    #[test]
+    fn test_extract_index_name_unique() {
+        assert_eq!(
+            extract_index_name_from_sql("CREATE UNIQUE INDEX idx_foo ON bar(col);", 0),
+            "idx_foo"
+        );
+    }
+
+    #[test]
+    fn test_extract_index_name_if_not_exists() {
+        assert_eq!(
+            extract_index_name_from_sql("CREATE INDEX IF NOT EXISTS idx_foo ON bar(col);", 0),
+            "idx_foo"
+        );
+    }
+
+    #[test]
+    fn test_extract_index_name_malformed() {
+        // Incomplete SQL falls back to idx_{n}
+        assert_eq!(extract_index_name_from_sql("CREATE INDEX", 5), "idx_5");
     }
 }

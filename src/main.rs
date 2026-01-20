@@ -806,6 +806,9 @@ enum DbaCommands {
         /// Actually execute query with EXPLAIN ANALYZE (careful!)
         #[arg(long)]
         analyze: bool,
+        /// Include structured fix actions in JSON output
+        #[arg(long)]
+        include_actions: bool,
     },
     /// Analyze disk usage (tables, indexes, TOAST)
     Storage {
@@ -1486,6 +1489,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                     query,
                     file,
                     analyze,
+                    include_actions,
                 } => {
                     // Get query from argument or file
                     let sql = if let Some(ref path) = file {
@@ -1498,7 +1502,19 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                         anyhow::bail!("Either a query or --file must be provided");
                     };
 
-                    let result = commands::explain::run_explain(client, &sql, analyze).await?;
+                    let mut result = commands::explain::run_explain(client, &sql, analyze).await?;
+
+                    // Generate actions if requested
+                    if include_actions {
+                        let actions = commands::explain::generate_actions(
+                            &result,
+                            cli.read_write,
+                            cli.allow_primary,
+                        );
+                        if !actions.is_empty() {
+                            result.actions = Some(actions);
+                        }
+                    }
 
                     if cli.json {
                         commands::explain::print_json(&result, timeouts)?;
