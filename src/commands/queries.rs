@@ -276,12 +276,22 @@ pub fn print_human(result: &QueriesResult, quiet: bool) {
         if !quiet {
             println!("pg_stat_statements extension not installed.");
             println!();
-            println!("To enable query tracking:");
+            println!("RECOMMENDATION: Enable pg_stat_statements on all PostgreSQL databases.");
+            println!("It's the only way to see which queries consume the most time/resources.");
+            println!(
+                "Overhead is minimal (<2%), and it's essential for diagnosing \"why is it slow?\""
+            );
+            println!();
+            println!("To enable:");
             println!(
                 "  1. Add to postgresql.conf: shared_preload_libraries = 'pg_stat_statements'"
             );
             println!("  2. Restart PostgreSQL");
             println!("  3. Run: CREATE EXTENSION pg_stat_statements;");
+            println!();
+            println!(
+                "Most managed PostgreSQL services (RDS, Cloud SQL, etc.) have this available."
+            );
         }
         return;
     }
