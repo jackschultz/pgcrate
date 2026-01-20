@@ -388,15 +388,15 @@ async fn check_sequences(client: &Client) -> CheckOutcome {
     let label = "SEQUENCES";
 
     // Check sequences that are >70% exhausted
-    // Use same calculation as sequences.rs for consistency (float with rounding)
+    // Use same calculation as sequences.rs for consistency (2 decimal places)
     let query = r#"
         SELECT
             schemaname || '.' || sequencename as seq_name,
             COALESCE(last_value, 0) as last_value,
             CASE
                 WHEN increment_by > 0 AND max_value > 0 AND last_value IS NOT NULL
-                THEN round(100.0 * last_value / max_value, 1)::double precision
-                ELSE 0::double precision
+                THEN round(100.0 * last_value / max_value, 2)::float8
+                ELSE 0::float8
             END as pct_used
         FROM pg_sequences
         ORDER BY pct_used DESC
