@@ -1,5 +1,51 @@
 # Changelog
 
+## v0.5.0
+
+**Query Analysis and Index Remediation**
+
+### New Commands
+
+- **`pgcrate dba explain`**: Query plan analysis with recommendations
+  - EXPLAIN and EXPLAIN ANALYZE support
+  - Detects sequential scans, missing indexes, nested loops, high-cost queries
+  - Generates CREATE INDEX recommendations with SQL
+  - `--include-actions` flag: Converts recommendations to structured fix actions
+  - `--file` flag: Read query from file
+  - Full JSON support with `pgcrate.diagnostics.explain` schema
+
+- **`pgcrate dba storage`**: Disk usage analysis
+  - Top tables and indexes by size
+  - TOAST table sizes
+  - Dead tuple counts and percentages
+  - Tablespace information
+  - `--top` flag: Control number of results
+  - Full JSON support with `pgcrate.diagnostics.storage` schema
+
+- **`pgcrate dba fix bloat`**: Rebuild bloated indexes
+  - REINDEX INDEX CONCURRENTLY on PostgreSQL 12+ (non-blocking)
+  - Falls back to blocking REINDEX on older versions
+  - Requires index to have >10% estimated bloat (safety check)
+  - Reports space reclaimed after execution
+  - `--blocking` flag: Force blocking REINDEX even on PG 12+
+
+### Improvements
+
+- **pg_stat_statements messaging**: When extension is not available, `pgcrate dba queries` now emphasizes that it's essential for performance analysis with minimal overhead (<2%)
+- **`dba explain --include-actions`**: CreateIndex recommendations become StructuredAction objects for automation
+
+### Fix Command Tree
+
+```
+pgcrate dba fix
+├── sequence   # Upgrade sequence type (smallint→integer→bigint)
+├── index      # Drop unused/duplicate indexes
+├── vacuum     # Run VACUUM on tables
+└── bloat      # REINDEX bloated indexes (NEW)
+```
+
+---
+
 ## v0.4.0
 
 **Command Structure Refactor (PGC-51)**
