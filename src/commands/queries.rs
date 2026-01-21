@@ -92,6 +92,9 @@ pub struct QueriesResult {
     pub extension_available: bool,
     pub stats_since: Option<String>,
     pub total_queries_tracked: i64,
+    /// Suggested next actions (populated when extension unavailable)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub next_actions: Vec<String>,
 }
 
 /// Check if pg_stat_statements extension is installed and accessible
@@ -207,6 +210,12 @@ pub async fn run_queries(
             extension_available: false,
             stats_since: None,
             total_queries_tracked: 0,
+            next_actions: vec![
+                "Add to postgresql.conf: shared_preload_libraries = 'pg_stat_statements'"
+                    .to_string(),
+                "Restart PostgreSQL".to_string(),
+                "Run: CREATE EXTENSION pg_stat_statements;".to_string(),
+            ],
         });
     }
 
@@ -232,6 +241,7 @@ pub async fn run_queries(
         extension_available: true,
         stats_since,
         total_queries_tracked,
+        next_actions: vec![],
     })
 }
 
@@ -276,12 +286,22 @@ pub fn print_human(result: &QueriesResult, quiet: bool) {
         if !quiet {
             println!("pg_stat_statements extension not installed.");
             println!();
-            println!("To enable query tracking:");
+            println!("RECOMMENDATION: Enable pg_stat_statements on all PostgreSQL databases.");
+            println!("It's the only way to see which queries consume the most time/resources.");
+            println!(
+                "Overhead is minimal (<2%), and it's essential for diagnosing \"why is it slow?\""
+            );
+            println!();
+            println!("To enable:");
             println!(
                 "  1. Add to postgresql.conf: shared_preload_libraries = 'pg_stat_statements'"
             );
             println!("  2. Restart PostgreSQL");
             println!("  3. Run: CREATE EXTENSION pg_stat_statements;");
+            println!();
+            println!(
+                "Most managed PostgreSQL services (RDS, Cloud SQL, etc.) have this available."
+            );
         }
         return;
     }

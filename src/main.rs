@@ -679,6 +679,23 @@ enum FixCommands {
         #[arg(long)]
         verify: bool,
     },
+    /// Rebuild bloated index via REINDEX
+    Bloat {
+        /// Index to reindex (schema.index)
+        index: String,
+        /// Use blocking REINDEX instead of CONCURRENTLY (not recommended)
+        #[arg(long)]
+        blocking: bool,
+        /// Show what would be done without executing
+        #[arg(long)]
+        dry_run: bool,
+        /// Confirm execution (required for fixes)
+        #[arg(long)]
+        yes: bool,
+        /// Run verification after fix
+        #[arg(long)]
+        verify: bool,
+    },
 }
 
 /// DBA diagnostic and remediation commands
@@ -756,6 +773,12 @@ enum DbaCommands {
         #[arg(long, default_value = "10")]
         limit: usize,
     },
+    /// Analyze buffer cache hit ratios
+    Cache {
+        /// Number of tables to show (default: 10)
+        #[arg(long, default_value = "10")]
+        limit: usize,
+    },
     /// Monitor streaming replication health
     Replication,
     /// Show top queries from pg_stat_statements
@@ -789,6 +812,9 @@ enum DbaCommands {
         /// Actually execute query with EXPLAIN ANALYZE (careful!)
         #[arg(long)]
         analyze: bool,
+        /// Include structured fix actions in JSON output
+        #[arg(long)]
+        include_actions: bool,
     },
     /// Analyze disk usage (tables, indexes, TOAST)
     Storage {
@@ -1371,10 +1397,12 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                         commands::vacuum::print_human(&result, cli.quiet);
                     }
 
-                    match result.overall_status {
-                        commands::vacuum::VacuumStatus::Critical => std::process::exit(2),
-                        commands::vacuum::VacuumStatus::Warning => std::process::exit(1),
-                        commands::vacuum::VacuumStatus::Healthy => {}
+                    if let Some(code) = exit_codes::for_finding(
+                        cli.json,
+                        result.overall_status == commands::vacuum::VacuumStatus::Critical,
+                        result.overall_status == commands::vacuum::VacuumStatus::Warning,
+                    ) {
+                        std::process::exit(code);
                     }
                 }
 
@@ -1387,10 +1415,30 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                         commands::bloat::print_human(&result, cli.quiet);
                     }
 
-                    match result.overall_status {
-                        commands::bloat::BloatStatus::Critical => std::process::exit(2),
-                        commands::bloat::BloatStatus::Warning => std::process::exit(1),
-                        commands::bloat::BloatStatus::Healthy => {}
+                    if let Some(code) = exit_codes::for_finding(
+                        cli.json,
+                        result.overall_status == commands::bloat::BloatStatus::Critical,
+                        result.overall_status == commands::bloat::BloatStatus::Warning,
+                    ) {
+                        std::process::exit(code);
+                    }
+                }
+
+                DbaCommands::Cache { limit } => {
+                    let result = commands::cache::run_cache(client, limit).await?;
+
+                    if cli.json {
+                        commands::cache::print_json(&result, timeouts)?;
+                    } else {
+                        commands::cache::print_human(&result, cli.quiet);
+                    }
+
+                    if let Some(code) = exit_codes::for_finding(
+                        cli.json,
+                        result.overall_status == commands::cache::CacheStatus::Critical,
+                        result.overall_status == commands::cache::CacheStatus::Warning,
+                    ) {
+                        std::process::exit(code);
                     }
                 }
 
@@ -1403,10 +1451,12 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                         commands::replication::print_human(&result, cli.quiet);
                     }
 
-                    match result.overall_status {
-                        commands::replication::ReplicationStatus::Critical => std::process::exit(2),
-                        commands::replication::ReplicationStatus::Warning => std::process::exit(1),
-                        commands::replication::ReplicationStatus::Healthy => {}
+                    if let Some(code) = exit_codes::for_finding(
+                        cli.json,
+                        result.overall_status == commands::replication::ReplicationStatus::Critical,
+                        result.overall_status == commands::replication::ReplicationStatus::Warning,
+                    ) {
+                        std::process::exit(code);
                     }
                 }
 
@@ -1432,10 +1482,12 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                         commands::queries::print_human(&result, cli.quiet);
                     }
 
-                    match result.overall_status {
-                        commands::queries::QueryStatus::Critical => std::process::exit(2),
-                        commands::queries::QueryStatus::Warning => std::process::exit(1),
-                        commands::queries::QueryStatus::Healthy => {}
+                    if let Some(code) = exit_codes::for_finding(
+                        cli.json,
+                        result.overall_status == commands::queries::QueryStatus::Critical,
+                        result.overall_status == commands::queries::QueryStatus::Warning,
+                    ) {
+                        std::process::exit(code);
                     }
                 }
 
@@ -1458,10 +1510,12 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                         commands::connections::print_human(&result, cli.quiet);
                     }
 
-                    match result.overall_status {
-                        commands::connections::ConnectionStatus::Critical => std::process::exit(2),
-                        commands::connections::ConnectionStatus::Warning => std::process::exit(1),
-                        commands::connections::ConnectionStatus::Healthy => {}
+                    if let Some(code) = exit_codes::for_finding(
+                        cli.json,
+                        result.overall_status == commands::connections::ConnectionStatus::Critical,
+                        result.overall_status == commands::connections::ConnectionStatus::Warning,
+                    ) {
+                        std::process::exit(code);
                     }
                 }
 
@@ -1469,6 +1523,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                     query,
                     file,
                     analyze,
+                    include_actions,
                 } => {
                     // Get query from argument or file
                     let sql = if let Some(ref path) = file {
@@ -1481,7 +1536,17 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                         anyhow::bail!("Either a query or --file must be provided");
                     };
 
-                    let result = commands::explain::run_explain(client, &sql, analyze).await?;
+                    let mut result = commands::explain::run_explain(client, &sql, analyze).await?;
+
+                    // Generate actions if requested (always include array, even if empty)
+                    if include_actions {
+                        let actions = commands::explain::generate_actions(
+                            &result,
+                            cli.read_write,
+                            cli.allow_primary,
+                        );
+                        result.actions = Some(actions);
+                    }
 
                     if cli.json {
                         commands::explain::print_json(&result, timeouts)?;
@@ -1499,10 +1564,9 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                         .iter()
                         .any(|i| matches!(i.severity, commands::explain::IssueSeverity::Warning));
 
-                    if has_critical {
-                        std::process::exit(2);
-                    } else if has_warning {
-                        std::process::exit(1);
+                    if let Some(code) = exit_codes::for_finding(cli.json, has_critical, has_warning)
+                    {
+                        std::process::exit(code);
                     }
                 }
 
@@ -1515,10 +1579,12 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                         commands::storage::print_human(&result, cli.quiet);
                     }
 
-                    match result.overall_status {
-                        commands::storage::StorageStatus::Critical => std::process::exit(2),
-                        commands::storage::StorageStatus::Warning => std::process::exit(1),
-                        commands::storage::StorageStatus::Healthy => {}
+                    if let Some(code) = exit_codes::for_finding(
+                        cli.json,
+                        result.overall_status == commands::storage::StorageStatus::Critical,
+                        result.overall_status == commands::storage::StorageStatus::Warning,
+                    ) {
+                        std::process::exit(code);
                     }
                 }
 
@@ -1673,6 +1739,54 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                             std::process::exit(1);
                         }
                     }
+                    FixCommands::Bloat {
+                        index,
+                        blocking,
+                        dry_run,
+                        yes,
+                        verify,
+                    } => {
+                        let (schema, name) = if let Some((s, n)) = index.split_once('.') {
+                            (s, n)
+                        } else {
+                            ("public", index.as_str())
+                        };
+
+                        if !cli.read_write || !cli.allow_primary {
+                            anyhow::bail!("Fix commands require --read-write and --primary flags");
+                        }
+                        if !*yes && !*dry_run {
+                            anyhow::bail!(
+                                "REINDEX requires confirmation. Use --yes to confirm or --dry-run to preview."
+                            );
+                        }
+
+                        let mut result = commands::fix::bloat::execute_reindex(
+                            client,
+                            schema,
+                            name,
+                            *dry_run || !*yes,
+                            *blocking,
+                        )
+                        .await?;
+
+                        if *verify && result.executed && result.success {
+                            let verify_steps = commands::fix::bloat::get_verify_steps(schema, name);
+                            let verification =
+                                commands::fix::verify::run_verification(&verify_steps);
+                            result.verification = Some(verification);
+                        }
+
+                        if cli.json {
+                            commands::fix::bloat::print_json(&result, timeouts)?;
+                        } else {
+                            commands::fix::bloat::print_human(&result, cli.quiet);
+                        }
+
+                        if !result.success {
+                            std::process::exit(1);
+                        }
+                    }
                 },
 
                 DbaCommands::Locks {
@@ -1768,10 +1882,12 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                         commands::xid::print_human(&result);
                     }
 
-                    match result.overall_status {
-                        commands::xid::XidStatus::Critical => std::process::exit(2),
-                        commands::xid::XidStatus::Warning => std::process::exit(1),
-                        commands::xid::XidStatus::Healthy => {}
+                    if let Some(code) = exit_codes::for_finding(
+                        cli.json,
+                        result.overall_status == commands::xid::XidStatus::Critical,
+                        result.overall_status == commands::xid::XidStatus::Warning,
+                    ) {
+                        std::process::exit(code);
                     }
                 }
 
@@ -1784,10 +1900,12 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                         commands::sequences::print_human(&result, cli.quiet, all);
                     }
 
-                    match result.overall_status {
-                        commands::sequences::SeqStatus::Critical => std::process::exit(2),
-                        commands::sequences::SeqStatus::Warning => std::process::exit(1),
-                        commands::sequences::SeqStatus::Healthy => {}
+                    if let Some(code) = exit_codes::for_finding(
+                        cli.json,
+                        result.overall_status == commands::sequences::SeqStatus::Critical,
+                        result.overall_status == commands::sequences::SeqStatus::Warning,
+                    ) {
+                        std::process::exit(code);
                     }
                 }
 

@@ -145,6 +145,9 @@ pgcrate dba queries                   # Top queries (requires pg_stat_statements
 pgcrate dba queries --by mean         # Sort by mean execution time
 pgcrate dba connections               # Connection usage vs max_connections
 pgcrate dba connections --by-user     # Group by user
+pgcrate dba explain "SELECT ..."      # Query plan analysis with recommendations
+pgcrate dba explain --include-actions # Include CREATE INDEX as fix actions
+pgcrate dba storage                   # Disk usage (tables, indexes, TOAST)
 pgcrate dba doctor                    # Health checks for CI
 ```
 
@@ -166,11 +169,15 @@ pgcrate dba fix sequence public.order_seq --upgrade-to bigint --yes
 pgcrate dba fix index --drop public.idx_unused --dry-run
 pgcrate dba fix index --drop public.idx_unused --yes
 
-# Vacuum fixes (reclaim space)
+# Vacuum fixes (reclaim table bloat)
 pgcrate dba fix vacuum public.orders --dry-run
 pgcrate dba fix vacuum public.orders --yes
 pgcrate dba fix vacuum public.orders --full --yes    # ACCESS EXCLUSIVE lock
 pgcrate dba fix vacuum public.orders --analyze --yes # Update statistics
+
+# Bloat fixes (rebuild bloated indexes)
+pgcrate dba fix bloat public.idx_orders_created --dry-run
+pgcrate dba fix bloat public.idx_orders_created --yes  # REINDEX CONCURRENTLY (PG12+)
 ```
 
 **Gate flags required for fix commands:**
@@ -180,8 +187,8 @@ pgcrate dba fix vacuum public.orders --analyze --yes # Update statistics
 
 **Risk levels:**
 - **Low:** `ALTER SEQUENCE`, regular `VACUUM`
-- **Medium:** `DROP INDEX CONCURRENTLY` (requires `--yes`)
-- **High:** `VACUUM FULL` (requires `--yes`, takes exclusive lock)
+- **Medium:** `DROP INDEX CONCURRENTLY`, `REINDEX CONCURRENTLY` (requires `--yes`)
+- **High:** `VACUUM FULL`, blocking `REINDEX` (requires `--yes`, takes exclusive lock)
 
 Fix commands include evidence collection, safety checks, and optional verification:
 ```bash

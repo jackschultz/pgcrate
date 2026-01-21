@@ -25,6 +25,8 @@ Commands are organized into namespaces. **Always use the full command path.**
 | Top queries | `pgcrate dba queries` |
 | XID wraparound | `pgcrate dba xid` |
 | Index analysis | `pgcrate dba indexes` |
+| Query plan analysis | `pgcrate dba explain "SELECT..."` |
+| Disk usage | `pgcrate dba storage` |
 | Describe table | `pgcrate inspect table <name>` |
 | Schema diff | `pgcrate inspect diff --to <url>` |
 | List extensions | `pgcrate inspect extensions` |
@@ -49,10 +51,13 @@ pgcrate
 │   ├── replication        # Streaming replication status
 │   ├── queries            # Top queries (pg_stat_statements)
 │   ├── connections        # Connection usage vs max_connections
+│   ├── explain            # Query plan analysis
+│   ├── storage            # Disk usage analysis
 │   └── fix                # Remediation commands
 │       ├── sequence       # Upgrade sequence type
 │       ├── index          # Drop unused index
-│       └── vacuum         # Run VACUUM on table
+│       ├── vacuum         # Run VACUUM on table
+│       └── bloat          # REINDEX bloated indexes
 ├── inspect                # Schema inspection
 │   ├── table <name>       # Describe table structure
 │   ├── diff               # Compare schemas
@@ -836,6 +841,22 @@ pgcrate dba indexes                  # Missing, unused, duplicate indexes
 pgcrate dba vacuum                   # Table bloat and vacuum health
 pgcrate dba bloat                    # Estimate table and index bloat
 pgcrate dba replication              # Streaming replication health
+pgcrate dba queries                  # Top queries from pg_stat_statements
+pgcrate dba connections              # Connection usage vs max_connections
+pgcrate dba storage                  # Disk usage (tables, indexes, TOAST)
+
+# Query plan analysis
+pgcrate dba explain "SELECT * FROM users WHERE email = 'test@example.com'"
+pgcrate dba explain --file query.sql --analyze   # Execute with ANALYZE
+pgcrate dba explain "SELECT ..." --include-actions --json  # Get fix actions
+
+# Explain recommendation thresholds:
+# - seq_scan_large_table: Sequential scan with >10,000 estimated rows → Warning
+# - seq_scan_large_table: Sequential scan with >100,000 estimated rows → Critical
+# - missing_index_on_filter: Filter on column in seq scan >10k rows → CreateIndex recommendation
+# - nested_loop_large_set: Nested loop with >1,000 estimated rows → Info
+# - sort_without_index: Sort with >10,000 estimated rows → ConsiderIndex recommendation
+# - high_cost_estimate: Total cost >10,000 → Warning
 
 # Connection context
 pgcrate context --json           # Connection info, server version, privileges
@@ -866,11 +887,16 @@ pgcrate --read-write --primary dba fix sequence public.order_seq --upgrade-to bi
 pgcrate --read-write --primary dba fix index --drop public.idx_unused --dry-run
 pgcrate --read-write --primary dba fix index --drop public.idx_unused --yes
 
-# Vacuum fixes (reclaim space)
+# Vacuum fixes (reclaim space from table bloat)
 pgcrate --read-write --primary dba fix vacuum public.orders --dry-run
 pgcrate --read-write --primary dba fix vacuum public.orders --yes
 pgcrate --read-write --primary dba fix vacuum public.orders --full --yes    # ACCESS EXCLUSIVE lock
 pgcrate --read-write --primary dba fix vacuum public.orders --analyze --yes # Update statistics
+
+# Bloat fixes (rebuild bloated indexes)
+pgcrate --read-write --primary dba fix bloat public.idx_orders_created --dry-run
+pgcrate --read-write --primary dba fix bloat public.idx_orders_created --yes  # REINDEX CONCURRENTLY (PG12+)
+pgcrate --read-write --primary dba fix bloat public.idx_orders_created --blocking --yes  # Force blocking REINDEX
 ```
 
 **Gate Flags (required for fix operations):**
@@ -928,6 +954,9 @@ Currently, `--json` is supported for these commands:
 - `dba fix sequence` - Sequence upgrade result
 - `dba fix index` - Index drop result
 - `dba fix vacuum` - Vacuum result
+- `dba fix bloat` - REINDEX result
+- `dba explain` - Query plan analysis
+- `dba storage` - Disk usage analysis
 
 For unsupported commands, `--json` returns a JSON error: `"--json not supported for '<cmd>' yet"`.
 

@@ -3,6 +3,7 @@
 //! Fix commands are separate from diagnostic commands because they mutate state.
 //! They follow a diagnose → fix → verify workflow with proper gating.
 
+pub mod bloat;
 pub mod common;
 pub mod index;
 pub mod sequence;

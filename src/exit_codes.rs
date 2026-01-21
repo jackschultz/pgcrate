@@ -45,3 +45,24 @@ pub const PERMISSION_DENIED: i32 = 13;
 
 /// Exit code: interrupted by Ctrl+C (SIGINT)
 pub const INTERRUPTED: i32 = 130;
+
+/// Determines exit code for diagnostic findings.
+///
+/// In human mode (json=false): 0=healthy, 1=warning, 2=critical
+/// In JSON mode (json=true): 0=healthy/warning (ok), 1=critical (not ok)
+///
+/// Rationale: JSON consumers parse severity from the response; exit code
+/// indicates "did it work" not "are there warnings". Warnings are informational.
+pub fn for_finding(json_mode: bool, is_critical: bool, is_warning: bool) -> Option<i32> {
+    if is_critical {
+        Some(if json_mode { WARNING } else { CRITICAL })
+    } else if is_warning {
+        if json_mode {
+            None // Exit 0 - don't exit, let main return normally
+        } else {
+            Some(WARNING)
+        }
+    } else {
+        None // Healthy - exit 0
+    }
+}

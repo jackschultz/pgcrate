@@ -452,7 +452,11 @@ fn check_queries_capability(has_pg_stat_statements: bool) -> CapabilityInfo {
                 ReasonCode::MissingExtension,
                 "pg_stat_statements extension not installed or accessible",
             )],
-            vec!["Install pg_stat_statements extension to enable query analysis".to_string()],
+            vec![
+                "pg_stat_statements is essential for query performance analysis".to_string(),
+                "Enable it: shared_preload_libraries = 'pg_stat_statements' + CREATE EXTENSION"
+                    .to_string(),
+            ],
         )
     } else {
         (CapabilityStatus::Available, vec![], vec![])
