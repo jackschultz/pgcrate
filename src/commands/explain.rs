@@ -413,6 +413,13 @@ fn extract_column_from_filter(filter: &str) -> Option<String> {
                 continue;
             }
 
+            // Strip table qualifier if present (e.g., "orders.status" -> "status")
+            let col = if let Some(dot_pos) = col.rfind('.') {
+                &col[dot_pos + 1..]
+            } else {
+                col
+            };
+
             return Some(col.to_string());
         }
     }
@@ -668,6 +675,19 @@ mod tests {
     fn test_extract_column_function_call_skipped() {
         // Function calls should return None (we can't index on functions easily)
         assert_eq!(extract_column_from_filter("(upper(name) = 'FOO')"), None);
+    }
+
+    #[test]
+    fn test_extract_column_strips_table_qualifier() {
+        // PostgreSQL EXPLAIN sometimes includes table alias in filter
+        assert_eq!(
+            extract_column_from_filter("(orders.status = 'pending'::text)"),
+            Some("status".to_string())
+        );
+        assert_eq!(
+            extract_column_from_filter("((o.amount)::numeric > 100)"),
+            Some("amount".to_string())
+        );
     }
 
     #[test]
