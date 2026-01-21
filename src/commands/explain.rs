@@ -156,6 +156,62 @@ const HIGH_COST_THRESHOLD: f64 = 10_000.0;
 const NESTED_LOOP_ROWS: i64 = 1_000;
 
 /// Run EXPLAIN on a query and analyze the plan
+/// Get set of existing indexes as "schema.table.column" keys
+async fn get_existing_indexes(client: &Client) -> Result<std::collections::HashSet<String>> {
+    let query = r#"
+        SELECT
+            n.nspname AS schema,
+            t.relname AS table,
+            a.attname AS column
+        FROM pg_index i
+        JOIN pg_class t ON t.oid = i.indrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(i.indkey)
+        WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+    "#;
+
+    let rows = client.query(query, &[]).await?;
+    let mut indexes = std::collections::HashSet::new();
+
+    for row in rows {
+        let schema: String = row.get("schema");
+        let table: String = row.get("table");
+        let column: String = row.get("column");
+        indexes.insert(format!("{}.{}.{}", schema, table, column));
+    }
+
+    Ok(indexes)
+}
+
+/// Parse index target from CREATE INDEX SQL
+/// Returns (schema, table, column) if parseable
+fn parse_index_target(sql: &str) -> Option<(String, String, String)> {
+    // Pattern: CREATE INDEX ... ON schema.table(column);
+    let sql_upper = sql.to_uppercase();
+    let on_pos = sql_upper.find(" ON ")?;
+    let after_on = &sql[on_pos + 4..];
+
+    // Find the opening paren
+    let paren_pos = after_on.find('(')?;
+    let table_part = after_on[..paren_pos].trim();
+
+    // Parse schema.table
+    let (schema, table) = if let Some(dot_pos) = table_part.find('.') {
+        (
+            table_part[..dot_pos].to_string(),
+            table_part[dot_pos + 1..].to_string(),
+        )
+    } else {
+        ("public".to_string(), table_part.to_string())
+    };
+
+    // Parse column (between parens)
+    let close_paren = after_on.find(')')?;
+    let column = after_on[paren_pos + 1..close_paren].trim().to_string();
+
+    Some((schema, table, column))
+}
+
 pub async fn run_explain(client: &Client, query: &str, analyze: bool) -> Result<ExplainResult> {
     // Build EXPLAIN command
     let explain_opts = if analyze {
@@ -196,6 +252,25 @@ pub async fn run_explain(client: &Client, query: &str, analyze: bool) -> Result<
     let mut recommendations = Vec::new();
 
     analyze_plan_node(root, &mut issues, &mut recommendations);
+
+    // Filter out index recommendations for columns that already have indexes
+    let existing_indexes = get_existing_indexes(client).await?;
+    recommendations.retain(|rec| {
+        if !matches!(rec.recommendation_type, RecommendationType::CreateIndex) {
+            return true; // Keep non-index recommendations
+        }
+        // Check if this recommendation is for a column that already has an index
+        if let Some(ref sql) = rec.sql {
+            // Parse table and column from SQL like "CREATE INDEX idx_t_c ON schema.table(column);"
+            if let Some((schema, table, column)) = parse_index_target(sql) {
+                let key = format!("{}.{}.{}", schema, table, column);
+                if existing_indexes.contains(&key) {
+                    return false; // Filter out - index already exists
+                }
+            }
+        }
+        true
+    });
 
     // Extract stats
     let stats = PlanStats {
@@ -383,8 +458,19 @@ fn extract_column_from_filter(filter: &str) -> Option<String> {
 
     // Split on common operators
     for op in &[
-        " = ", " IS ", " > ", " < ", " >= ", " <= ", " <> ", " != ", " LIKE ", " ~~",
-        " IN ", " ANY ", " BETWEEN ",
+        " = ",
+        " IS ",
+        " > ",
+        " < ",
+        " >= ",
+        " <= ",
+        " <> ",
+        " != ",
+        " LIKE ",
+        " ~~",
+        " IN ",
+        " ANY ",
+        " BETWEEN ",
     ] {
         if let Some(pos) = cleaned.find(op) {
             let left = cleaned[..pos].trim();
@@ -687,6 +773,30 @@ mod tests {
         assert_eq!(
             extract_column_from_filter("((o.amount)::numeric > 100)"),
             Some("amount".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_index_target() {
+        assert_eq!(
+            parse_index_target("CREATE INDEX idx_orders_status ON public.orders(status);"),
+            Some((
+                "public".to_string(),
+                "orders".to_string(),
+                "status".to_string()
+            ))
+        );
+        assert_eq!(
+            parse_index_target("CREATE INDEX idx_users_email ON users(email);"),
+            Some((
+                "public".to_string(),
+                "users".to_string(),
+                "email".to_string()
+            ))
+        );
+        assert_eq!(
+            parse_index_target("CREATE INDEX CONCURRENTLY idx_foo ON app.bar(baz);"),
+            Some(("app".to_string(), "bar".to_string(), "baz".to_string()))
         );
     }
 

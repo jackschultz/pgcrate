@@ -5,6 +5,7 @@
 mod anonymize;
 pub mod bloat;
 mod bootstrap;
+pub mod cache;
 pub mod capabilities;
 pub mod connections;
 pub mod context;

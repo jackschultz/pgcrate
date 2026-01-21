@@ -211,7 +211,8 @@ pub async fn run_queries(
             stats_since: None,
             total_queries_tracked: 0,
             next_actions: vec![
-                "Add to postgresql.conf: shared_preload_libraries = 'pg_stat_statements'".to_string(),
+                "Add to postgresql.conf: shared_preload_libraries = 'pg_stat_statements'"
+                    .to_string(),
                 "Restart PostgreSQL".to_string(),
                 "Run: CREATE EXTENSION pg_stat_statements;".to_string(),
             ],

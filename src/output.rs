@@ -426,6 +426,7 @@ pub mod schema {
     pub const INDEXES: &str = "pgcrate.diagnostics.indexes";
     pub const VACUUM: &str = "pgcrate.diagnostics.vacuum";
     pub const BLOAT: &str = "pgcrate.diagnostics.bloat";
+    pub const CACHE: &str = "pgcrate.diagnostics.cache";
     pub const REPLICATION: &str = "pgcrate.diagnostics.replication";
     pub const CONTEXT: &str = "pgcrate.diagnostics.context";
     pub const CAPABILITIES: &str = "pgcrate.diagnostics.capabilities";
