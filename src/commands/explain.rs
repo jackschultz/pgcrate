@@ -366,24 +366,54 @@ fn analyze_plan_node(
 
 /// Extract column name from a filter expression (simplified heuristic)
 fn extract_column_from_filter(filter: &str) -> Option<String> {
-    // Common patterns: (column = value), (column IS NOT NULL), column::type
-    // This is a simplified extraction - real implementation would need proper parsing
+    // PostgreSQL EXPLAIN shows filters in various formats:
+    // - Simple: (status = 'active'::text)
+    // - With cast: ((product_name)::text = 'Product 42'::text)
+    // - Function: (upper(name) = 'FOO')
+    //
+    // We want to extract the column name, handling common patterns.
 
-    // Look for pattern like (column_name = or (column_name IS
-    let filter = filter.trim_start_matches('(').trim_end_matches(')');
+    let filter = filter.trim();
+
+    // Strip outer parens repeatedly (handles ((col)::text = ...))
+    let mut cleaned = filter;
+    while cleaned.starts_with('(') && cleaned.ends_with(')') {
+        cleaned = &cleaned[1..cleaned.len() - 1];
+    }
 
     // Split on common operators
     for op in &[
-        " = ", " IS ", " > ", " < ", " >= ", " <= ", " <> ", " != ", " LIKE ", " IN ",
+        " = ", " IS ", " > ", " < ", " >= ", " <= ", " <> ", " != ", " LIKE ", " ~~",
+        " IN ", " ANY ", " BETWEEN ",
     ] {
-        if let Some(pos) = filter.find(op) {
-            let left = filter[..pos].trim();
-            // Skip if it looks like a function call or complex expression
-            if !left.contains('(') && !left.contains(' ') {
-                // Remove any type casts
-                let col = left.split("::").next().unwrap_or(left);
-                return Some(col.to_string());
+        if let Some(pos) = cleaned.find(op) {
+            let left = cleaned[..pos].trim();
+
+            // Handle PostgreSQL's ((col)::type) pattern
+            // Strip parens from left side too
+            let mut col_part = left;
+            while col_part.starts_with('(') && col_part.ends_with(')') {
+                col_part = &col_part[1..col_part.len() - 1];
             }
+            // Also handle case where it's just (col)::type (no closing paren before ::)
+            if col_part.starts_with('(') {
+                col_part = &col_part[1..];
+                // Find the closing paren or end
+                if let Some(end) = col_part.find(')') {
+                    col_part = &col_part[..end];
+                }
+            }
+
+            // Remove type casts
+            let col = col_part.split("::").next().unwrap_or(col_part).trim();
+
+            // Skip if it looks like a function call (contains open paren after stripping)
+            // or is empty, or contains spaces (complex expression)
+            if col.is_empty() || col.contains('(') || col.contains(' ') {
+                continue;
+            }
+
+            return Some(col.to_string());
         }
     }
 
@@ -607,6 +637,37 @@ mod tests {
             extract_column_from_filter("(age > 18)"),
             Some("age".to_string())
         );
+    }
+
+    #[test]
+    fn test_extract_column_postgres_cast_format() {
+        // PostgreSQL's common EXPLAIN output format: ((col)::type = value)
+        assert_eq!(
+            extract_column_from_filter("((product_name)::text = 'Product 42'::text)"),
+            Some("product_name".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_column_like_operator() {
+        assert_eq!(
+            extract_column_from_filter("((name)::text ~~ 'foo%'::text)"),
+            Some("name".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_column_nested_parens() {
+        assert_eq!(
+            extract_column_from_filter("(((status)::text = 'active'::text))"),
+            Some("status".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_column_function_call_skipped() {
+        // Function calls should return None (we can't index on functions easily)
+        assert_eq!(extract_column_from_filter("(upper(name) = 'FOO')"), None);
     }
 
     #[test]

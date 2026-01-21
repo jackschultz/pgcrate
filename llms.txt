@@ -850,6 +850,14 @@ pgcrate dba explain "SELECT * FROM users WHERE email = 'test@example.com'"
 pgcrate dba explain --file query.sql --analyze   # Execute with ANALYZE
 pgcrate dba explain "SELECT ..." --include-actions --json  # Get fix actions
 
+# Explain recommendation thresholds:
+# - seq_scan_large_table: Sequential scan with >10,000 estimated rows → Warning
+# - seq_scan_large_table: Sequential scan with >100,000 estimated rows → Critical
+# - missing_index_on_filter: Filter on column in seq scan >10k rows → CreateIndex recommendation
+# - nested_loop_large_set: Nested loop with >1,000 estimated rows → Info
+# - sort_without_index: Sort with >10,000 estimated rows → ConsiderIndex recommendation
+# - high_cost_estimate: Total cost >10,000 → Warning
+
 # Connection context
 pgcrate context --json           # Connection info, server version, privileges
 pgcrate capabilities --json      # What can this connection do?
