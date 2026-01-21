@@ -2,71 +2,29 @@
 
 Ideas and planned features, prioritized by impact and effort.
 
+**Last reviewed:** 2026-01-21
+
 ---
 
-## DBA Diagnostics (v0.6.0)
+## v0.6.0: FK Index Detection
 
-### High Priority
+### `dba indexes` Enhancement - Foreign Keys Without Indexes
+**Status:** Next up (PGC-90)
+**Effort:** S-M (1 day)
+**Impact:** High - most common hidden performance issue
 
-#### `dba fk-indexes` - Foreign Keys Without Indexes
-**Effort:** M (1 day)
-**Impact:** High - most common "hidden" performance issue
-
-Foreign keys without supporting indexes cause:
+Add FK index detection to existing `dba indexes` command. Foreign keys without supporting indexes cause:
 - Slow DELETE operations (full table scan to check references)
-- Slow joins on FK columns
+- Slow JOINs on FK columns
 - Lock contention during cascading deletes
 
-```bash
-pgcrate dba fk-indexes              # List FKs missing indexes
-pgcrate dba fk-indexes --json       # JSON output
-pgcrate dba fix index --create ...  # Future: auto-create missing indexes
-```
-
-**Implementation:**
-- Query pg_constraint + pg_index to find FKs without matching indexes
-- Show: table, column, referenced table, estimated row count
-- Status: warning if table has >10k rows, critical if >100k
+See: `studio/tasks/PGC-90-fk-indexes/task.md`
 
 ---
 
-### Medium Priority
+## v0.6.x: Additional DBA Enhancements
 
-#### `dba long-queries` - Long-Running Queries
-**Effort:** S (few hours)
-**Impact:** Medium - catches stuck queries
-
-```bash
-pgcrate dba long-queries             # Queries running > 60s (default)
-pgcrate dba long-queries --threshold 30s
-pgcrate dba long-queries --json
-```
-
-**Implementation:**
-- Query pg_stat_activity WHERE state = 'active' AND now() - query_start > threshold
-- Show: pid, duration, query (truncated), user, database
-- Include pg_cancel_backend() suggestion for stuck queries
-
----
-
-#### `dba idle-txn` - Idle in Transaction
-**Effort:** S (few hours)
-**Impact:** Medium - common cause of lock contention
-
-```bash
-pgcrate dba idle-txn                 # Connections idle in transaction > 60s
-pgcrate dba idle-txn --threshold 30s
-pgcrate dba idle-txn --json
-```
-
-**Implementation:**
-- Query pg_stat_activity WHERE state = 'idle in transaction'
-- Show: pid, duration, last query, user
-- Critical if > 5 minutes (likely forgotten transaction)
-
----
-
-#### `dba stats-age` - Statistics Freshness
+### `dba stats-age` - Statistics Freshness
 **Effort:** S (few hours)
 **Impact:** Medium - stale stats = bad query plans
 
@@ -76,33 +34,26 @@ pgcrate dba stats-age --threshold 7d # Warn if stats > 7 days old
 pgcrate dba stats-age --json
 ```
 
-**Implementation:**
-- Query pg_stat_user_tables for last_analyze, last_autoanalyze
-- Show: table, last analyzed, row estimate vs actual (if available)
-- Recommend ANALYZE for stale tables
+Shows when table statistics were last updated. Stale statistics lead to poor query plans.
 
 ---
 
-#### `dba autovacuum` - Autovacuum Health
+### `dba autovacuum-progress` - Running Autovacuum
 **Effort:** S (few hours)
-**Impact:** Medium - is autovacuum keeping up?
+**Impact:** Low-Medium - monitoring insight
 
 ```bash
-pgcrate dba autovacuum               # Autovacuum status and lagging tables
-pgcrate dba autovacuum --json
+pgcrate dba autovacuum-progress      # Currently running autovacuum operations
+pgcrate dba autovacuum-progress --json
 ```
 
-**Implementation:**
-- Check pg_stat_progress_vacuum for running autovacuum
-- Check pg_stat_user_tables for tables approaching autovacuum threshold
-- Show: tables with high dead tuple ratio, last vacuum time
-- Warning if dead_tup_ratio > 10%, critical if > 20%
+Shows pg_stat_progress_vacuum for in-flight autovacuum operations.
+
+Note: `dba vacuum` already shows last_vacuum/last_autovacuum times and dead tuple ratios.
 
 ---
 
-### Lower Priority
-
-#### `dba checkpoints` - Checkpoint Analysis
+### `dba checkpoints` - Checkpoint Analysis
 **Effort:** M (1 day)
 **Impact:** Low-Medium - tuning for write-heavy workloads
 
@@ -111,14 +62,11 @@ pgcrate dba checkpoints              # Checkpoint frequency and spread
 pgcrate dba checkpoints --json
 ```
 
-**Implementation:**
-- Query pg_stat_bgwriter for checkpoint stats
-- Calculate checkpoint frequency, buffers written
-- Warn if checkpoints too frequent (< 5 min apart)
+Analyze pg_stat_bgwriter for checkpoint stats. Warn if checkpoints too frequent.
 
 ---
 
-#### `dba config` - Configuration Review
+### `dba config` - Configuration Review
 **Effort:** M (1 day)
 **Impact:** Medium - but subjective, hard to get right
 
@@ -127,15 +75,24 @@ pgcrate dba config                   # Compare settings to recommendations
 pgcrate dba config --json
 ```
 
-**Implementation:**
-- Check shared_buffers, work_mem, effective_cache_size, etc.
-- Compare to system RAM and connection count
-- Recommendations based on PGTune-style heuristics
-- Caution: recommendations are starting points, not guarantees
+Compare shared_buffers, work_mem, etc. to PGTune-style heuristics.
+Caution: recommendations are starting points, not guarantees.
 
 ---
 
-## Developer Workflow (v0.7.0+)
+## Already Covered (removed from roadmap)
+
+These were originally planned but already exist:
+
+| Proposed | Covered By |
+|----------|------------|
+| `dba long-queries` | `dba locks --long-tx` |
+| `dba idle-txn` | `dba locks --idle-in-tx` + `dba connections` |
+| `dba autovacuum` | `dba vacuum` (shows last_autovacuum, dead tuples) |
+
+---
+
+## v0.7.0+: Developer Workflow
 
 ### `inspect diff` - Schema Comparison
 Compare schemas between two databases.
@@ -155,6 +112,7 @@ Full environment setup from production with anonymized data.
 
 ### `dba fix index --create`
 Auto-create missing indexes for foreign keys.
+Natural follow-up to PGC-90.
 
 ### `dba fix autovacuum`
 Adjust autovacuum settings for specific tables.
