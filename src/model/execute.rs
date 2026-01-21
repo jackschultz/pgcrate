@@ -150,13 +150,14 @@ pub async fn execute_model(
     })
 }
 
-/// Check if a table exists in the database
+/// Check if a table (not view) exists in the database
 async fn table_exists(client: &Client, schema: &str, name: &str) -> Result<bool> {
     let row = client
         .query_one(
             "SELECT EXISTS (
                 SELECT 1 FROM information_schema.tables
                 WHERE table_schema = $1 AND table_name = $2
+                AND table_type = 'BASE TABLE'
             )",
             &[&schema, &name],
         )

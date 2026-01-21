@@ -77,11 +77,11 @@ async fn get_database_cache_stats(client: &Client) -> Result<DatabaseCacheStats>
     let query = r#"
         SELECT
             datname as database,
-            blks_hit,
-            blks_read,
-            CASE WHEN blks_hit + blks_read > 0
-                THEN 100.0 * blks_hit / (blks_hit + blks_read)
-                ELSE 100.0
+            COALESCE(blks_hit, 0) as blks_hit,
+            COALESCE(blks_read, 0) as blks_read,
+            CASE WHEN COALESCE(blks_hit, 0) + COALESCE(blks_read, 0) > 0
+                THEN (100.0 * blks_hit / (blks_hit + blks_read))::float8
+                ELSE 100.0::float8
             END as hit_ratio_pct
         FROM pg_stat_database
         WHERE datname = current_database()
@@ -110,24 +110,24 @@ async fn get_table_cache_stats(client: &Client, limit: usize) -> Result<Vec<Tabl
         SELECT
             schemaname as schema,
             relname as table,
-            heap_blks_hit,
-            heap_blks_read,
-            CASE WHEN heap_blks_hit + heap_blks_read > 0
-                THEN 100.0 * heap_blks_hit / (heap_blks_hit + heap_blks_read)
+            COALESCE(heap_blks_hit, 0) as heap_blks_hit,
+            COALESCE(heap_blks_read, 0) as heap_blks_read,
+            CASE WHEN COALESCE(heap_blks_hit, 0) + COALESCE(heap_blks_read, 0) > 0
+                THEN (100.0 * heap_blks_hit / (heap_blks_hit + heap_blks_read))::float8
                 ELSE NULL
             END as heap_hit_ratio_pct,
-            idx_blks_hit,
-            idx_blks_read,
-            CASE WHEN idx_blks_hit + idx_blks_read > 0
-                THEN 100.0 * idx_blks_hit / (idx_blks_hit + idx_blks_read)
+            COALESCE(idx_blks_hit, 0) as idx_blks_hit,
+            COALESCE(idx_blks_read, 0) as idx_blks_read,
+            CASE WHEN COALESCE(idx_blks_hit, 0) + COALESCE(idx_blks_read, 0) > 0
+                THEN (100.0 * idx_blks_hit / (idx_blks_hit + idx_blks_read))::float8
                 ELSE NULL
             END as idx_hit_ratio_pct
         FROM pg_statio_user_tables
-        WHERE heap_blks_hit + heap_blks_read > 0
+        WHERE COALESCE(heap_blks_hit, 0) + COALESCE(heap_blks_read, 0) > 0
         ORDER BY
-            CASE WHEN heap_blks_hit + heap_blks_read > 0
-                THEN 100.0 * heap_blks_hit / (heap_blks_hit + heap_blks_read)
-                ELSE 100.0
+            CASE WHEN COALESCE(heap_blks_hit, 0) + COALESCE(heap_blks_read, 0) > 0
+                THEN (100.0 * heap_blks_hit / (heap_blks_hit + heap_blks_read))::float8
+                ELSE 100.0::float8
             END ASC
         LIMIT $1
     "#;
