@@ -67,13 +67,20 @@ fn model_id_from_path(models_dir: &Path, path: &Path) -> Result<Relation> {
     let mut comps = rel.components();
     let schema = comps
         .next()
-        .ok_or_else(|| anyhow!("model path missing schema: {}", path.display()))?
+        .ok_or_else(|| anyhow!(
+            "model path missing schema directory: {}\n  Expected: models/<schema>/<name>.sql\n  Example: models/analytics/user_stats.sql",
+            path.display()
+        ))?
         .as_os_str()
         .to_string_lossy()
         .to_string();
     let filename = comps
         .next()
-        .ok_or_else(|| anyhow!("model path missing filename: {}", path.display()))?
+        .ok_or_else(|| anyhow!(
+            "model path missing filename: {}\n  Expected: models/<schema>/<name>.sql\n  Example: models/{}/my_model.sql",
+            path.display(),
+            schema
+        ))?
         .as_os_str()
         .to_string_lossy()
         .to_string();
