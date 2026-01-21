@@ -489,8 +489,63 @@ llms.txt                  # Update docs
 | 3 | `dba checkpoints` command | S |
 | 4 | `dba autovacuum-progress` command | S |
 | 5 | `dba config` command | M |
-| 6 | Integration tests | S |
-| 7 | Update llms.txt and docs | S |
+| 6 | Integration tests (pgcrate) | S |
+| 7 | Update llms.txt and SKILL.md | S |
+| 8 | Create agentest scenarios | M |
+| 9 | Run agentest scenarios, iterate on feedback | S |
+
+---
+
+## Agentest Scenarios
+
+Create scenarios in `/Users/jackschultz/workspace/dev/agentest-studio/` to validate agent usability.
+
+### Required Scenarios
+
+| Scenario | Purpose | Setup |
+|----------|---------|-------|
+| `diagnostics/fk-indexes` | Test FK index detection | Tables with FKs, some missing indexes |
+| `diagnostics/stats-age` | Test stats-age command | Tables with stale/fresh statistics |
+| `diagnostics/config-review` | Test config command | Default PG config |
+
+### Scenario Structure
+
+Each scenario needs:
+```
+scenarios/diagnostics/<name>.yaml    # Scenario definition
+workspace/tasks/<id>-<name>.md       # Task instructions
+fixtures/<name>_setup.sql            # Setup SQL (if needed)
+verify/<name>.sql                    # Verification SQL
+```
+
+### Scenario Guidelines
+
+- Task should describe a realistic DBA workflow
+- Agent should use the new commands to diagnose issues
+- Verification should check agent used correct commands
+- Collect feedback to improve skill docs
+
+---
+
+## Pre-Push Checklist
+
+Before pushing any commits, run locally:
+
+```bash
+cd /Users/jackschultz/workspace/dev/pgcrate-studio/pgcrate-dba-diagnostics
+
+# Format and lint
+cargo fmt --check
+cargo clippy -- -D warnings
+
+# Unit tests
+cargo test --bins
+
+# Integration tests (requires local postgres)
+cargo test --test integration
+
+# All must pass before pushing
+```
 
 ---
 
@@ -504,6 +559,9 @@ llms.txt                  # Update docs
 - [ ] All commands support `--json`
 - [ ] Integration tests pass
 - [ ] llms.txt updated
+- [ ] SKILL.md updated in agentest-studio
+- [ ] Agentest scenarios created and passing (7/7 rating target)
+- [ ] CI tests pass locally before each push
 
 ---
 
@@ -512,3 +570,5 @@ llms.txt                  # Update docs
 - All commands are read-only, safe for production
 - Keep `dba config` recommendations conservative
 - Include disclaimers where appropriate
+- Follow existing patterns in `src/commands/` for consistency
+- Match JSON output envelope pattern used by other diagnostics
