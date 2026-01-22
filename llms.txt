@@ -27,6 +27,10 @@ Commands are organized into namespaces. **Always use the full command path.**
 | Index analysis | `pgcrate dba indexes` |
 | Query plan analysis | `pgcrate dba explain "SELECT..."` |
 | Disk usage | `pgcrate dba storage` |
+| Stale statistics | `pgcrate dba stats-age` |
+| Checkpoint health | `pgcrate dba checkpoints` |
+| Autovacuum status | `pgcrate dba autovacuum-progress` |
+| Config review | `pgcrate dba config` |
 | Describe table | `pgcrate inspect table <name>` |
 | Schema diff | `pgcrate inspect diff --to <url>` |
 | List extensions | `pgcrate inspect extensions` |
@@ -45,7 +49,7 @@ pgcrate
 │   ├── locks              # Blocking locks, long transactions
 │   ├── sequences          # Sequence exhaustion
 │   ├── xid                # Transaction ID wraparound
-│   ├── indexes            # Missing/unused/duplicate indexes
+│   ├── indexes            # Missing/unused/duplicate/FK-without-index
 │   ├── vacuum             # Dead tuple ratios, vacuum health
 │   ├── bloat              # Table/index bloat estimates
 │   ├── replication        # Streaming replication status
@@ -53,6 +57,10 @@ pgcrate
 │   ├── connections        # Connection usage vs max_connections
 │   ├── explain            # Query plan analysis
 │   ├── storage            # Disk usage analysis
+│   ├── stats-age          # Tables with stale statistics
+│   ├── checkpoints        # Checkpoint frequency and health
+│   ├── autovacuum-progress # Currently running autovacuum
+│   ├── config             # PostgreSQL configuration review
 │   └── fix                # Remediation commands
 │       ├── sequence       # Upgrade sequence type
 │       ├── index          # Drop unused index
@@ -837,13 +845,17 @@ pgcrate dba triage --include-fixes --json  # Include recommended fix actions
 pgcrate dba locks                    # Blocking locks and long transactions
 pgcrate dba xid                      # Transaction ID wraparound analysis
 pgcrate dba sequences                # Sequence exhaustion check
-pgcrate dba indexes                  # Missing, unused, duplicate indexes
+pgcrate dba indexes                  # Missing, unused, duplicate, FK-without-index
 pgcrate dba vacuum                   # Table bloat and vacuum health
 pgcrate dba bloat                    # Estimate table and index bloat
 pgcrate dba replication              # Streaming replication health
 pgcrate dba queries                  # Top queries from pg_stat_statements
 pgcrate dba connections              # Connection usage vs max_connections
 pgcrate dba storage                  # Disk usage (tables, indexes, TOAST)
+pgcrate dba stats-age                # Tables with stale statistics
+pgcrate dba checkpoints              # Checkpoint frequency and WAL health
+pgcrate dba autovacuum-progress      # Currently running autovacuum operations
+pgcrate dba config                   # PostgreSQL configuration review
 
 # Query plan analysis
 pgcrate dba explain "SELECT * FROM users WHERE email = 'test@example.com'"
@@ -957,6 +969,10 @@ Currently, `--json` is supported for these commands:
 - `dba fix bloat` - REINDEX result
 - `dba explain` - Query plan analysis
 - `dba storage` - Disk usage analysis
+- `dba stats-age` - Statistics freshness analysis
+- `dba checkpoints` - Checkpoint health analysis
+- `dba autovacuum-progress` - Running autovacuum operations
+- `dba config` - Configuration review with suggestions
 
 For unsupported commands, `--json` returns a JSON error: `"--json not supported for '<cmd>' yet"`.
 

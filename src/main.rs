@@ -833,6 +833,21 @@ enum DbaCommands {
         #[command(subcommand)]
         command: FixCommands,
     },
+    /// Show tables with stale statistics (may cause poor query plans)
+    StatsAge {
+        /// Warning threshold in days (default: 7)
+        #[arg(long, value_name = "DAYS")]
+        threshold: Option<f64>,
+        /// Number of tables to show (default: 20)
+        #[arg(long, default_value = "20")]
+        limit: usize,
+    },
+    /// Analyze checkpoint frequency and health
+    Checkpoints,
+    /// Show currently running autovacuum operations
+    AutovacuumProgress,
+    /// Review PostgreSQL configuration settings
+    Config,
 }
 
 /// Schema and permission inspection commands
@@ -1920,6 +1935,76 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                         commands::indexes::print_json(&result, timeouts)?;
                     } else {
                         commands::indexes::print_human(&result, cli.verbose);
+                    }
+                }
+
+                DbaCommands::StatsAge { threshold, limit } => {
+                    let result =
+                        commands::stats_age::run_stats_age(client, threshold, limit).await?;
+
+                    if cli.json {
+                        commands::stats_age::print_json(&result, timeouts)?;
+                    } else {
+                        commands::stats_age::print_human(&result, cli.quiet);
+                    }
+
+                    // Exit code based on status
+                    if let Some(code) = exit_codes::for_finding(
+                        cli.json,
+                        result.overall_status == commands::stats_age::StatsStatus::Critical,
+                        result.overall_status == commands::stats_age::StatsStatus::Warning,
+                    ) {
+                        std::process::exit(code);
+                    }
+                }
+
+                DbaCommands::Checkpoints => {
+                    let result = commands::checkpoints::run_checkpoints(client).await?;
+
+                    if cli.json {
+                        commands::checkpoints::print_json(&result, timeouts)?;
+                    } else {
+                        commands::checkpoints::print_human(&result, cli.quiet);
+                    }
+
+                    // Exit code based on status
+                    if let Some(code) = exit_codes::for_finding(
+                        cli.json,
+                        result.overall_status == commands::checkpoints::CheckpointStatus::Critical,
+                        result.overall_status == commands::checkpoints::CheckpointStatus::Warning,
+                    ) {
+                        std::process::exit(code);
+                    }
+                }
+
+                DbaCommands::AutovacuumProgress => {
+                    let result =
+                        commands::autovacuum_progress::run_autovacuum_progress(client).await?;
+
+                    if cli.json {
+                        commands::autovacuum_progress::print_json(&result, timeouts)?;
+                    } else {
+                        commands::autovacuum_progress::print_human(&result, cli.quiet);
+                    }
+                    // No exit code - this is purely informational
+                }
+
+                DbaCommands::Config => {
+                    let result = commands::config::run_config(client).await?;
+
+                    if cli.json {
+                        commands::config::print_json(&result, timeouts)?;
+                    } else {
+                        commands::config::print_human(&result, cli.quiet);
+                    }
+
+                    // Exit code based on status (warning if has suggestions, never critical)
+                    if let Some(code) = exit_codes::for_finding(
+                        cli.json,
+                        false, // Never critical
+                        result.has_suggestions,
+                    ) {
+                        std::process::exit(code);
                     }
                 }
             }
