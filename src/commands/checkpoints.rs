@@ -76,31 +76,92 @@ pub struct CheckpointsResult {
 
 /// Run checkpoint analysis
 pub async fn run_checkpoints(client: &Client) -> Result<CheckpointsResult> {
-    let query = r#"
+    // Check PG version - PG17+ moved checkpoint stats to pg_stat_checkpointer
+    let version_query = "SELECT current_setting('server_version_num')::int";
+    let version_num: i32 = client.query_one(version_query, &[]).await?.get(0);
+
+    let (
+        checkpoints_timed,
+        checkpoints_requested,
+        checkpoint_write_time,
+        checkpoint_sync_time,
+        buffers_checkpoint,
+        stats_reset,
+    ): (
+        i64,
+        i64,
+        f64,
+        f64,
+        i64,
+        Option<chrono::DateTime<chrono::Utc>>,
+    );
+
+    if version_num >= 170000 {
+        // PostgreSQL 17+: checkpoint stats in pg_stat_checkpointer
+        let query = r#"
+            SELECT
+                num_timed,
+                num_requested,
+                write_time,
+                sync_time,
+                buffers_written,
+                stats_reset
+            FROM pg_stat_checkpointer
+        "#;
+        let row = client.query_one(query, &[]).await?;
+        checkpoints_timed = row.get("num_timed");
+        checkpoints_requested = row.get("num_requested");
+        checkpoint_write_time = row.get("write_time");
+        checkpoint_sync_time = row.get("sync_time");
+        buffers_checkpoint = row.get("buffers_written");
+        stats_reset = row.get("stats_reset");
+    } else {
+        // PostgreSQL <17: checkpoint stats in pg_stat_bgwriter
+        let query = r#"
+            SELECT
+                checkpoints_timed,
+                checkpoints_req,
+                checkpoint_write_time,
+                checkpoint_sync_time,
+                buffers_checkpoint,
+                stats_reset
+            FROM pg_stat_bgwriter
+        "#;
+        let row = client.query_one(query, &[]).await?;
+        checkpoints_timed = row.get("checkpoints_timed");
+        checkpoints_requested = row.get("checkpoints_req");
+        checkpoint_write_time = row.get("checkpoint_write_time");
+        checkpoint_sync_time = row.get("checkpoint_sync_time");
+        buffers_checkpoint = row.get("buffers_checkpoint");
+        stats_reset = row.get("stats_reset");
+    }
+
+    // Buffer stats are always in pg_stat_bgwriter
+    let bgwriter_query = r#"
         SELECT
-            checkpoints_timed,
-            checkpoints_req,
-            checkpoint_write_time,
-            checkpoint_sync_time,
-            buffers_checkpoint,
             buffers_clean,
-            buffers_backend,
-            maxwritten_clean,
-            stats_reset
+            buffers_alloc,
+            maxwritten_clean
         FROM pg_stat_bgwriter
     "#;
+    let bgwriter_row = client.query_one(bgwriter_query, &[]).await?;
+    let buffers_bgwriter: i64 = bgwriter_row.get("buffers_clean");
+    let maxwritten_clean: i64 = bgwriter_row.get("maxwritten_clean");
 
-    let row = client.query_one(query, &[]).await?;
-
-    let checkpoints_timed: i64 = row.get("checkpoints_timed");
-    let checkpoints_requested: i64 = row.get("checkpoints_req");
-    let checkpoint_write_time: f64 = row.get("checkpoint_write_time");
-    let checkpoint_sync_time: f64 = row.get("checkpoint_sync_time");
-    let buffers_checkpoint: i64 = row.get("buffers_checkpoint");
-    let buffers_bgwriter: i64 = row.get("buffers_clean");
-    let buffers_backend: i64 = row.get("buffers_backend");
-    let maxwritten_clean: i64 = row.get("maxwritten_clean");
-    let stats_reset: Option<chrono::DateTime<chrono::Utc>> = row.get("stats_reset");
+    // For backends writing, we need pg_stat_io in PG16+ or estimate from buffers_backend
+    // In PG17+, buffers_backend was removed - we'll use 0 as a fallback
+    let buffers_backend: i64 = if version_num >= 160000 {
+        // PG16+ has pg_stat_io but structure is complex; use 0 for now
+        0
+    } else {
+        // Try to get from pg_stat_bgwriter if available
+        let backend_query = "SELECT COALESCE((SELECT buffers_backend FROM pg_stat_bgwriter), 0)";
+        client
+            .query_one(backend_query, &[])
+            .await
+            .map(|r| r.get(0))
+            .unwrap_or(0)
+    };
 
     let total_checkpoints = checkpoints_timed + checkpoints_requested;
     let requested_pct = if total_checkpoints > 0 {

@@ -55,7 +55,20 @@ pub async fn run_autovacuum_progress(client: &Client) -> Result<AutovacuumProgre
         });
     }
 
-    let query = r#"
+    // Check PG version for column name compatibility
+    // PG17+ renamed num_dead_tuples -> num_dead_item_ids
+    let version_query = "SELECT current_setting('server_version_num')::int";
+    let version_num: i32 = client.query_one(version_query, &[]).await?.get(0);
+
+    // Use version-appropriate column name for dead tuple count
+    let dead_tuple_col = if version_num >= 170000 {
+        "p.num_dead_item_ids"
+    } else {
+        "p.num_dead_tuples"
+    };
+
+    let query = format!(
+        r#"
         SELECT
             p.pid,
             d.datname AS database,
@@ -65,17 +78,18 @@ pub async fn run_autovacuum_progress(client: &Client) -> Result<AutovacuumProgre
             p.heap_blks_scanned,
             p.heap_blks_vacuumed,
             p.index_vacuum_count,
-            p.max_dead_tuples,
-            p.num_dead_tuples,
+            {} AS num_dead_tuples,
             a.query_start,
             EXTRACT(EPOCH FROM (now() - a.query_start)) AS running_seconds
         FROM pg_stat_progress_vacuum p
         JOIN pg_stat_activity a ON a.pid = p.pid
         JOIN pg_database d ON d.oid = p.datid
         ORDER BY a.query_start
-    "#;
+    "#,
+        dead_tuple_col
+    );
 
-    let rows = client.query(query, &[]).await?;
+    let rows = client.query(&query, &[]).await?;
 
     let mut workers = Vec::new();
     for row in rows {

@@ -1,4 +1,4 @@
-//! Integration tests for new diagnostic commands in v0.6.0:
+//! Integration tests for new diagnostic commands:
 //! - stats-age: Tables with stale statistics
 //! - checkpoints: Checkpoint frequency and health
 //! - autovacuum-progress: Currently running autovacuum
@@ -381,6 +381,48 @@ fn test_config_includes_disclaimer() {
     );
 }
 
+#[test]
+fn test_config_includes_requires_restart() {
+    skip_if_no_db!();
+    let db = TestDatabase::new();
+    let project = TestProject::from_fixture("with_migrations", &db);
+
+    project.run_pgcrate_ok(&["migrate", "up"]);
+
+    let output = project.run_pgcrate(&["dba", "config", "--json"]);
+
+    let out = stdout(&output);
+    let json: serde_json::Value = serde_json::from_str(&out)
+        .unwrap_or_else(|e| panic!("Invalid JSON: {}\nOutput: {}", e, out));
+
+    let data = json.get("data").expect("Should have data field");
+    let settings = data
+        .get("settings")
+        .and_then(|s| s.as_array())
+        .expect("Should have settings array");
+
+    // All settings should have requires_restart field
+    for setting in settings {
+        assert!(
+            setting.get("requires_restart").is_some(),
+            "Setting should have requires_restart field: {}",
+            setting
+        );
+    }
+
+    // shared_buffers should require restart (postmaster context)
+    let shared_buffers = settings
+        .iter()
+        .find(|s| s.get("name").and_then(|n| n.as_str()) == Some("shared_buffers"));
+    if let Some(sb) = shared_buffers {
+        assert_eq!(
+            sb.get("requires_restart").and_then(|r| r.as_bool()),
+            Some(true),
+            "shared_buffers should require restart"
+        );
+    }
+}
+
 // ============================================================================
 // FK index detection (extended tests)
 // ============================================================================
@@ -420,4 +462,105 @@ fn test_fk_index_json_includes_fk_without_indexes() {
         "Should have data.fk_without_indexes: {}",
         json
     );
+}
+
+#[test]
+fn test_fk_composite_key_detection() {
+    skip_if_no_db!();
+    let db = TestDatabase::new();
+    let project = TestProject::from_fixture("with_migrations", &db);
+
+    project.run_pgcrate_ok(&["migrate", "up"]);
+
+    // Create tables with composite FK but no matching index
+    db.run_sql_ok(
+        "CREATE TABLE composite_parent (
+            tenant_id INTEGER,
+            id INTEGER,
+            name TEXT,
+            PRIMARY KEY (tenant_id, id)
+        )",
+    );
+    db.run_sql_ok(
+        "CREATE TABLE composite_child (
+            id SERIAL PRIMARY KEY,
+            tenant_id INTEGER,
+            parent_id INTEGER,
+            data TEXT,
+            FOREIGN KEY (tenant_id, parent_id) REFERENCES composite_parent(tenant_id, id)
+        )",
+    );
+    // Note: No index on (tenant_id, parent_id) - should be flagged
+
+    let output = project.run_pgcrate(&["dba", "indexes", "--json"]);
+
+    let out = stdout(&output);
+    let json: serde_json::Value = serde_json::from_str(&out)
+        .unwrap_or_else(|e| panic!("Invalid JSON: {}\nOutput: {}", e, out));
+
+    let data = json.get("data").expect("Should have data field");
+    let fk_list = data
+        .get("fk_without_indexes")
+        .and_then(|f| f.as_array())
+        .expect("Should have fk_without_indexes array");
+
+    // Should detect the composite FK without index
+    let has_composite = fk_list
+        .iter()
+        .any(|fk| fk.to_string().contains("composite_child"));
+    assert!(
+        has_composite,
+        "Should detect composite FK without index: {:?}",
+        fk_list
+    );
+}
+
+#[test]
+fn test_fk_composite_key_with_index_not_flagged() {
+    skip_if_no_db!();
+    let db = TestDatabase::new();
+    let project = TestProject::from_fixture("with_migrations", &db);
+
+    project.run_pgcrate_ok(&["migrate", "up"]);
+
+    // Create tables with composite FK that HAS a matching index
+    db.run_sql_ok(
+        "CREATE TABLE comp_indexed_parent (
+            tenant_id INTEGER,
+            id INTEGER,
+            name TEXT,
+            PRIMARY KEY (tenant_id, id)
+        )",
+    );
+    db.run_sql_ok(
+        "CREATE TABLE comp_indexed_child (
+            id SERIAL PRIMARY KEY,
+            tenant_id INTEGER,
+            parent_id INTEGER,
+            data TEXT,
+            FOREIGN KEY (tenant_id, parent_id) REFERENCES comp_indexed_parent(tenant_id, id)
+        )",
+    );
+    // Add index covering the FK columns
+    db.run_sql_ok(
+        "CREATE INDEX comp_indexed_child_fk_idx ON comp_indexed_child(tenant_id, parent_id)",
+    );
+
+    let output = project.run_pgcrate(&["dba", "indexes", "--json"]);
+
+    let out = stdout(&output);
+    let json: serde_json::Value = serde_json::from_str(&out)
+        .unwrap_or_else(|e| panic!("Invalid JSON: {}\nOutput: {}", e, out));
+
+    let data = json.get("data").expect("Should have data field");
+    if let Some(fk_list) = data.get("fk_without_indexes").and_then(|f| f.as_array()) {
+        let has_comp_indexed = fk_list
+            .iter()
+            .any(|fk| fk.to_string().contains("comp_indexed_child"));
+        assert!(
+            !has_comp_indexed,
+            "FK with matching index should not be flagged: {:?}",
+            fk_list
+        );
+    }
 }
