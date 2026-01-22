@@ -3,10 +3,13 @@
 //! Each submodule contains related command functions.
 
 mod anonymize;
+pub mod autovacuum_progress;
 pub mod bloat;
 mod bootstrap;
 pub mod cache;
 pub mod capabilities;
+pub mod checkpoints;
+pub mod config;
 pub mod connections;
 pub mod context;
 mod db;
@@ -26,6 +29,7 @@ mod seed;
 pub mod sequences;
 mod snapshot;
 mod sql_cmd;
+pub mod stats_age;
 pub mod storage;
 pub mod triage;
 pub mod vacuum;

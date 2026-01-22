@@ -434,6 +434,10 @@ pub mod schema {
     pub const CONNECTIONS: &str = "pgcrate.diagnostics.connections";
     pub const EXPLAIN: &str = "pgcrate.diagnostics.explain";
     pub const STORAGE: &str = "pgcrate.diagnostics.storage";
+    pub const STATS_AGE: &str = "pgcrate.diagnostics.stats_age";
+    pub const CHECKPOINTS: &str = "pgcrate.diagnostics.checkpoints";
+    pub const AUTOVACUUM_PROGRESS: &str = "pgcrate.diagnostics.autovacuum_progress";
+    pub const CONFIG: &str = "pgcrate.diagnostics.config";
 }
 
 // =============================================================================

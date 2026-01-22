@@ -4,6 +4,7 @@
 //! - Missing indexes cause slow sequential scans
 //! - Unused indexes waste space and slow writes
 //! - Duplicate indexes provide no benefit over their counterparts
+//! - Foreign keys without indexes cause slow DELETEs and JOINs
 
 use anyhow::Result;
 use serde::Serialize;
@@ -12,6 +13,57 @@ use tokio_postgres::Client;
 /// Thresholds for index recommendations
 const MIN_SEQ_SCANS_FOR_MISSING: i64 = 1000;
 const MIN_TABLE_SIZE_BYTES: i64 = 10 * 1024 * 1024; // 10MB
+
+/// Thresholds for FK index recommendations (based on table row count)
+const FK_CRITICAL_ROWS: i64 = 100_000;
+const FK_WARNING_ROWS: i64 = 10_000;
+
+/// Status for FK index findings
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FkIndexStatus {
+    /// Table has < 10K rows, missing index is low impact
+    Info,
+    /// Table has 10K-100K rows, missing index may cause issues
+    Warning,
+    /// Table has > 100K rows, missing index will cause performance problems
+    Critical,
+}
+
+impl FkIndexStatus {
+    pub fn from_row_count(rows: i64) -> Self {
+        if rows >= FK_CRITICAL_ROWS {
+            FkIndexStatus::Critical
+        } else if rows >= FK_WARNING_ROWS {
+            FkIndexStatus::Warning
+        } else {
+            FkIndexStatus::Info
+        }
+    }
+
+    pub fn emoji(&self) -> &'static str {
+        match self {
+            FkIndexStatus::Info => "ℹ",
+            FkIndexStatus::Warning => "⚠",
+            FkIndexStatus::Critical => "✗",
+        }
+    }
+}
+
+/// A foreign key column without a supporting index
+#[derive(Debug, Clone, Serialize)]
+pub struct FkWithoutIndex {
+    pub schema: String,
+    pub table: String,
+    /// FK columns (may be composite)
+    pub columns: Vec<String>,
+    pub ref_schema: String,
+    pub ref_table: String,
+    pub ref_columns: Vec<String>,
+    pub constraint_name: String,
+    pub table_rows: i64,
+    pub status: FkIndexStatus,
+}
 
 /// A table that may need an index
 #[derive(Debug, Clone, Serialize)]
@@ -81,6 +133,7 @@ pub struct IndexesResult {
     pub missing: Vec<MissingIndexCandidate>,
     pub unused: Vec<UnusedIndex>,
     pub duplicates: Vec<DuplicateIndexSet>,
+    pub fk_without_indexes: Vec<FkWithoutIndex>,
     pub total_unused_bytes: i64,
     pub total_unused_size: String,
     pub total_duplicate_bytes: i64,
@@ -313,6 +366,99 @@ pub async fn get_duplicate_indexes(client: &Client) -> Result<Vec<DuplicateIndex
     Ok(results)
 }
 
+/// Get foreign keys that don't have supporting indexes.
+///
+/// A FK needs an index on the referencing columns for:
+/// - Fast DELETE operations (checking if referenced rows exist)
+/// - Efficient JOINs on FK columns
+/// - Avoiding lock contention during cascading operations
+///
+/// Handles composite FKs by checking if any index covers the FK columns as a prefix.
+pub async fn get_fk_without_indexes(client: &Client) -> Result<Vec<FkWithoutIndex>> {
+    // This query:
+    // 1. Gets all FK constraints with their columns (handles composite FKs)
+    // 2. Checks if any index covers those columns as a leading prefix
+    // 3. Returns only FKs where no suitable index exists
+    let query = r#"
+        WITH fk_info AS (
+            SELECT
+                c.conname AS constraint_name,
+                n.nspname AS schema_name,
+                t.relname AS table_name,
+                nf.nspname AS ref_schema,
+                tf.relname AS ref_table,
+                -- Get FK column names in order
+                array_agg(a.attname ORDER BY x.ordinality) AS fk_columns,
+                -- Get referenced column names in order
+                array_agg(af.attname ORDER BY x.ordinality) AS ref_columns,
+                -- Get FK column attnum array for index matching
+                c.conkey AS fk_attnum_array
+            FROM pg_constraint c
+            JOIN pg_class t ON t.oid = c.conrelid
+            JOIN pg_namespace n ON n.oid = t.relnamespace
+            JOIN pg_class tf ON tf.oid = c.confrelid
+            JOIN pg_namespace nf ON nf.oid = tf.relnamespace
+            CROSS JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY AS x(fk_attnum, ref_attnum, ordinality)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = x.fk_attnum
+            JOIN pg_attribute af ON af.attrelid = c.confrelid AND af.attnum = x.ref_attnum
+            WHERE c.contype = 'f'
+              AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+            GROUP BY c.conname, n.nspname, t.relname, nf.nspname, tf.relname, c.conkey
+        ),
+        indexed_fks AS (
+            -- Check if any index covers the FK columns as a leading prefix
+            SELECT DISTINCT
+                fk.constraint_name
+            FROM fk_info fk
+            JOIN pg_class t2 ON t2.relname = fk.table_name
+            JOIN pg_namespace n2 ON n2.oid = t2.relnamespace AND n2.nspname = fk.schema_name
+            JOIN pg_index ix ON ix.indrelid = t2.oid
+            WHERE
+                -- Check that FK columns are a prefix of index columns
+                -- Convert int2vector to array for comparison, then slice to FK length
+                (SELECT array_agg(unnest) FROM unnest(ix.indkey) LIMIT array_length(fk.fk_attnum_array, 1))
+                    = fk.fk_attnum_array
+        )
+        SELECT
+            fk.schema_name,
+            fk.table_name,
+            fk.fk_columns,
+            fk.ref_schema,
+            fk.ref_table,
+            fk.ref_columns,
+            fk.constraint_name,
+            COALESCE(s.n_live_tup, 0) AS table_rows
+        FROM fk_info fk
+        LEFT JOIN indexed_fks ifk ON ifk.constraint_name = fk.constraint_name
+        LEFT JOIN pg_stat_user_tables s ON s.schemaname = fk.schema_name AND s.relname = fk.table_name
+        WHERE ifk.constraint_name IS NULL  -- Only show FKs without indexes
+        ORDER BY COALESCE(s.n_live_tup, 0) DESC
+    "#;
+
+    let rows = client.query(query, &[]).await?;
+
+    let mut results = Vec::new();
+    for row in rows {
+        let table_rows: i64 = row.get("table_rows");
+        let fk_columns: Vec<String> = row.get("fk_columns");
+        let ref_columns: Vec<String> = row.get("ref_columns");
+
+        results.push(FkWithoutIndex {
+            schema: row.get("schema_name"),
+            table: row.get("table_name"),
+            columns: fk_columns,
+            ref_schema: row.get("ref_schema"),
+            ref_table: row.get("ref_table"),
+            ref_columns,
+            constraint_name: row.get("constraint_name"),
+            table_rows,
+            status: FkIndexStatus::from_row_count(table_rows),
+        });
+    }
+
+    Ok(results)
+}
+
 /// Run full index analysis
 pub async fn run_indexes(
     client: &Client,
@@ -322,6 +468,7 @@ pub async fn run_indexes(
     let missing = get_missing_index_candidates(client, missing_limit).await?;
     let unused = get_unused_indexes(client, unused_limit).await?;
     let duplicates = get_duplicate_indexes(client).await?;
+    let fk_without_indexes = get_fk_without_indexes(client).await?;
 
     let total_unused_bytes: i64 = unused.iter().map(|u| u.index_size_bytes).sum();
     let total_duplicate_bytes: i64 = duplicates.iter().map(|d| d.wasted_bytes).sum();
@@ -330,6 +477,7 @@ pub async fn run_indexes(
         missing,
         unused,
         duplicates,
+        fk_without_indexes,
         total_unused_bytes,
         total_unused_size: format_bytes(total_unused_bytes),
         total_duplicate_bytes,
@@ -503,6 +651,70 @@ pub fn print_human(result: &IndexesResult, verbose: bool) {
         }
     }
 
+    // Foreign keys without indexes
+    if !result.fk_without_indexes.is_empty() {
+        has_output = true;
+        println!("FOREIGN KEYS WITHOUT INDEXES:");
+        println!();
+
+        for fk in &result.fk_without_indexes {
+            let fk_cols = fk.columns.join(", ");
+            let ref_cols = fk.ref_columns.join(", ");
+            println!(
+                "  {} {}.{}({}) → {}.{}({})",
+                fk.status.emoji(),
+                fk.schema,
+                fk.table,
+                fk_cols,
+                fk.ref_schema,
+                fk.ref_table,
+                ref_cols
+            );
+            println!(
+                "       table rows: ~{}  constraint: {}",
+                format_number(fk.table_rows),
+                fk.constraint_name
+            );
+
+            if verbose {
+                // Show the CREATE INDEX statement
+                let idx_name = format!("idx_{}_{}_fk", fk.table, fk.columns.join("_"));
+                let cols = fk.columns.join(", ");
+                println!(
+                    "       suggested: CREATE INDEX {} ON {}.{} ({});",
+                    idx_name, fk.schema, fk.table, cols
+                );
+            }
+        }
+        println!();
+
+        // Count by severity
+        let critical_count = result
+            .fk_without_indexes
+            .iter()
+            .filter(|fk| fk.status == FkIndexStatus::Critical)
+            .count();
+        let warning_count = result
+            .fk_without_indexes
+            .iter()
+            .filter(|fk| fk.status == FkIndexStatus::Warning)
+            .count();
+
+        if critical_count > 0 {
+            println!(
+                "  ✗ {} FKs on large tables (>100K rows) - will cause slow DELETEs",
+                critical_count
+            );
+        }
+        if warning_count > 0 {
+            println!(
+                "  ⚠ {} FKs on medium tables (>10K rows) - may cause slow DELETEs",
+                warning_count
+            );
+        }
+        println!();
+    }
+
     // Summary
     if has_output {
         println!("SUMMARY:");
@@ -523,6 +735,9 @@ pub fn print_human(result: &IndexesResult, verbose: bool) {
         }
         if !result.missing.is_empty() {
             println!("  Missing candidates: {}", result.missing.len());
+        }
+        if !result.fk_without_indexes.is_empty() {
+            println!("  FKs without index:  {}", result.fk_without_indexes.len());
         }
     } else {
         println!("No index issues found.");
@@ -617,9 +832,26 @@ pub fn print_json(
     use crate::output::{schema, DiagnosticOutput, Severity};
 
     // Derive severity from findings
+    // FK without indexes on large tables is critical (causes slow DELETEs)
     // Missing indexes with high seq scans are concerning
     // Large amounts of wasted space from unused/duplicates also warrant attention
-    let severity = if result
+    let has_critical_fk = result
+        .fk_without_indexes
+        .iter()
+        .any(|fk| fk.status == FkIndexStatus::Critical);
+
+    let has_warning_fk = result
+        .fk_without_indexes
+        .iter()
+        .any(|fk| fk.status == FkIndexStatus::Warning);
+
+    let severity = if has_critical_fk {
+        // FK on table with >100K rows without index - will cause slow DELETEs
+        Severity::Critical
+    } else if has_warning_fk {
+        // FK on table with >10K rows without index
+        Severity::Warning
+    } else if result
         .missing
         .iter()
         .any(|m| m.seq_scan > 10000 && m.scan_ratio > 100.0)
@@ -634,6 +866,7 @@ pub fn print_json(
     } else if !result.missing.is_empty()
         || !result.unused.is_empty()
         || !result.duplicates.is_empty()
+        || !result.fk_without_indexes.is_empty()
     {
         // Some findings - report as warning so automation knows there's something to review
         Severity::Warning
@@ -691,5 +924,35 @@ mod tests {
     #[test]
     fn test_format_number_small() {
         assert_eq!(format_number(42), "42");
+    }
+
+    #[test]
+    fn test_fk_index_status_info() {
+        assert_eq!(FkIndexStatus::from_row_count(0), FkIndexStatus::Info);
+        assert_eq!(FkIndexStatus::from_row_count(9_999), FkIndexStatus::Info);
+    }
+
+    #[test]
+    fn test_fk_index_status_warning() {
+        assert_eq!(
+            FkIndexStatus::from_row_count(10_000),
+            FkIndexStatus::Warning
+        );
+        assert_eq!(
+            FkIndexStatus::from_row_count(99_999),
+            FkIndexStatus::Warning
+        );
+    }
+
+    #[test]
+    fn test_fk_index_status_critical() {
+        assert_eq!(
+            FkIndexStatus::from_row_count(100_000),
+            FkIndexStatus::Critical
+        );
+        assert_eq!(
+            FkIndexStatus::from_row_count(1_000_000),
+            FkIndexStatus::Critical
+        );
     }
 }
