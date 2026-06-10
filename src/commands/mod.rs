@@ -64,7 +64,7 @@ pub use schema::{describe, diff, generate, init};
 pub use seed::{seed_diff, seed_list, seed_run, seed_validate};
 
 // Re-export sql/query command
-pub use sql_cmd::sql;
+pub use sql_cmd::{sql, SqlOptions, DEFAULT_COST_WARN_THRESHOLD};
 
 // Re-export extension commands from new module
 pub use extension::extension_list;

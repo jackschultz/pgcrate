@@ -149,27 +149,272 @@ fn test_sql_blocks_write_by_default() {
     );
 }
 
+// ============================================================================
+// Dry-run by default (--allow-write previews and rolls back)
+// ============================================================================
+
+/// The core safety guarantee: `--allow-write` previews a destructive statement
+/// inside a transaction and ROLLS BACK, so nothing changes. `--commit` applies.
 #[test]
-fn test_sql_allows_write_with_flag() {
+fn test_sql_allow_write_is_a_dry_run() {
+    skip_if_no_db!();
+    let db = TestDatabase::new();
+    let project = TestProject::from_fixture("with_migrations", &db);
+
+    project.run_pgcrate_ok(&["migrate", "up"]);
+    db.run_sql_ok("INSERT INTO users (email, name) VALUES ('seed@test.com', 'Original')");
+
+    // Dry-run an UPDATE. It should report what it would do but change nothing.
+    let output = project.run_pgcrate_ok(&[
+        "sql",
+        "-c",
+        "UPDATE users SET name = 'Changed' WHERE email = 'seed@test.com'",
+        "--allow-write",
+    ]);
+    let out = stdout(&output);
+    assert!(
+        out.to_uppercase().contains("DRY RUN"),
+        "Dry run should be announced: {}",
+        out
+    );
+
+    // Provable rollback: the row is untouched.
+    let name = db.query("SELECT name FROM users WHERE email = 'seed@test.com'");
+    assert_eq!(
+        name, "Original",
+        "Dry run must not change data — row should still be 'Original'"
+    );
+}
+
+/// `--commit` (which implies --allow-write) actually applies the change.
+#[test]
+fn test_sql_commit_applies_the_write() {
+    skip_if_no_db!();
+    let db = TestDatabase::new();
+    let project = TestProject::from_fixture("with_migrations", &db);
+
+    project.run_pgcrate_ok(&["migrate", "up"]);
+    db.run_sql_ok("INSERT INTO users (email, name) VALUES ('seed@test.com', 'Original')");
+
+    let output = project.run_pgcrate_ok(&[
+        "sql",
+        "-c",
+        "UPDATE users SET name = 'Changed' WHERE email = 'seed@test.com'",
+        "--commit",
+    ]);
+    let out = stdout(&output);
+    assert!(
+        out.to_uppercase().contains("COMMITTED"),
+        "Commit should be announced: {}",
+        out
+    );
+
+    let name = db.query("SELECT name FROM users WHERE email = 'seed@test.com'");
+    assert_eq!(name, "Changed", "Commit must apply the write");
+}
+
+/// The full provable-rollback contract in one test: dry-run leaves data
+/// unchanged, then --commit changes it.
+#[test]
+fn test_sql_dry_run_then_commit() {
+    skip_if_no_db!();
+    let db = TestDatabase::new();
+    let project = TestProject::from_fixture("with_migrations", &db);
+
+    project.run_pgcrate_ok(&["migrate", "up"]);
+    db.run_sql_ok("INSERT INTO users (email, name) VALUES ('rollback@test.com', 'Before')");
+
+    // 1. Dry run — data unchanged.
+    project.run_pgcrate_ok(&[
+        "sql",
+        "-c",
+        "UPDATE users SET name = 'After' WHERE email = 'rollback@test.com'",
+        "--allow-write",
+    ]);
+    assert_eq!(
+        db.query("SELECT name FROM users WHERE email = 'rollback@test.com'"),
+        "Before",
+        "After dry run the data must be unchanged"
+    );
+
+    // 2. Commit — data changed.
+    project.run_pgcrate_ok(&[
+        "sql",
+        "-c",
+        "UPDATE users SET name = 'After' WHERE email = 'rollback@test.com'",
+        "--commit",
+    ]);
+    assert_eq!(
+        db.query("SELECT name FROM users WHERE email = 'rollback@test.com'"),
+        "After",
+        "After commit the data must be changed"
+    );
+}
+
+/// Dry-run JSON output reports the affected count and committed=false; a sample
+/// of affected rows is included for a single DML statement.
+#[test]
+fn test_sql_dry_run_json_shape() {
+    skip_if_no_db!();
+    let db = TestDatabase::new();
+    let project = TestProject::from_fixture("with_migrations", &db);
+
+    project.run_pgcrate_ok(&["migrate", "up"]);
+    db.run_sql_ok("INSERT INTO users (email, name) VALUES ('json@test.com', 'Orig')");
+
+    let output = project.run_pgcrate(&[
+        "sql",
+        "-c",
+        "UPDATE users SET name = 'New' WHERE email = 'json@test.com'",
+        "--allow-write",
+        "--json",
+    ]);
+    assert!(output.status.success(), "dry-run JSON should succeed");
+
+    let json = parse_json(&output);
+    let write = json.get("write").expect("write outcome present");
+    assert_eq!(
+        write.get("committed").and_then(|v| v.as_bool()),
+        Some(false),
+        "dry run must report committed=false: {}",
+        json
+    );
+    assert_eq!(
+        write.get("rows_affected").and_then(|v| v.as_u64()),
+        Some(1),
+        "dry run must report rows_affected=1: {}",
+        json
+    );
+
+    // A sample result with the would-be value should be present.
+    let has_sample = json
+        .get("results")
+        .and_then(|r| r.as_array())
+        .map(|arr| {
+            arr.iter().any(|r| {
+                r.get("type").and_then(|t| t.as_str()) == Some("sample")
+                    && serde_json::to_string(r).unwrap().contains("New")
+            })
+        })
+        .unwrap_or(false);
+    assert!(has_sample, "dry run should include a sample row: {}", json);
+
+    // And the data is still unchanged.
+    assert_eq!(
+        db.query("SELECT name FROM users WHERE email = 'json@test.com'"),
+        "Orig"
+    );
+}
+
+/// Non-transactional statements (CREATE INDEX CONCURRENTLY) cannot be previewed;
+/// --allow-write alone must refuse with guidance to use --commit.
+#[test]
+fn test_sql_concurrent_index_requires_commit() {
     skip_if_no_db!();
     let db = TestDatabase::new();
     let project = TestProject::from_fixture("with_migrations", &db);
 
     project.run_pgcrate_ok(&["migrate", "up"]);
 
-    // INSERT with --allow-write should work
-    let _output = project.run_pgcrate_ok(&[
+    let output = project.run_pgcrate(&[
         "sql",
         "-c",
-        "INSERT INTO users (email, name) VALUES ('allowed@test.com', 'Allowed')",
+        "CREATE INDEX CONCURRENTLY users_name_idx ON users (name)",
         "--allow-write",
     ]);
-
-    // Verify data was inserted
-    let check = db.query("SELECT email FROM users WHERE email = 'allowed@test.com'");
     assert!(
-        check.contains("allowed@test.com"),
-        "Data should be inserted with --allow-write"
+        !output.status.success(),
+        "CREATE INDEX CONCURRENTLY under --allow-write should be refused"
+    );
+    let err = stderr(&output);
+    assert!(
+        err.contains("--commit"),
+        "Refusal should point at --commit: {}",
+        err
+    );
+}
+
+// ============================================================================
+// Row caps
+// ============================================================================
+
+/// SELECT output is capped and a trailer announces the withheld rows.
+#[test]
+fn test_sql_select_is_capped() {
+    skip_if_no_db!();
+    let db = TestDatabase::new();
+    let project = TestProject::from_fixture("with_migrations", &db);
+
+    let output = project.run_pgcrate_ok(&[
+        "sql",
+        "-c",
+        "SELECT g FROM generate_series(1, 20) g",
+        "--limit",
+        "5",
+    ]);
+    let out = stdout(&output);
+    assert!(
+        out.contains("more row"),
+        "Capped output should show a '+N more rows' trailer: {}",
+        out
+    );
+}
+
+/// `--limit 0` uncaps the result set (no trailer).
+#[test]
+fn test_sql_limit_zero_uncaps() {
+    skip_if_no_db!();
+    let db = TestDatabase::new();
+    let project = TestProject::from_fixture("with_migrations", &db);
+
+    let output = project.run_pgcrate_ok(&[
+        "sql",
+        "-c",
+        "SELECT g FROM generate_series(1, 20) g",
+        "--limit",
+        "0",
+    ]);
+    let out = stdout(&output);
+    assert!(
+        !out.contains("more row"),
+        "--limit 0 should not truncate: {}",
+        out
+    );
+    // All 20 values present.
+    assert!(out.contains("20"), "All rows should be shown: {}", out);
+}
+
+/// The row cap and its truncation count are reflected in JSON output too.
+#[test]
+fn test_sql_cap_in_json() {
+    skip_if_no_db!();
+    let db = TestDatabase::new();
+    let project = TestProject::from_fixture("with_migrations", &db);
+
+    let output = project.run_pgcrate(&[
+        "sql",
+        "-c",
+        "SELECT g FROM generate_series(1, 20) g",
+        "--limit",
+        "5",
+        "--json",
+    ]);
+    assert!(output.status.success());
+    let json = parse_json(&output);
+    let truncated = json
+        .get("results")
+        .and_then(|r| r.as_array())
+        .and_then(|arr| {
+            arr.iter()
+                .find(|r| r.get("type").and_then(|t| t.as_str()) == Some("query"))
+        })
+        .and_then(|q| q.get("truncated"))
+        .and_then(|t| t.as_u64());
+    assert_eq!(
+        truncated,
+        Some(15),
+        "JSON query result should report 15 truncated rows: {}",
+        json
     );
 }
 
