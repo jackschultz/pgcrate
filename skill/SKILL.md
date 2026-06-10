@@ -87,12 +87,28 @@ single DML statement), then **rolls back** — nothing changes. Preview first,
 show the human the affected count/sample, then re-run with `--commit` to apply.
 `--commit` is the only flag that writes; you can't forget to preview.
 
+Writes that hide inside a query are caught, not just bare `INSERT`/`UPDATE`/
+`DELETE`: writable CTEs (`WITH d AS (DELETE … RETURNING *) SELECT * FROM d`),
+leading-CTE DML, `SELECT … INTO new_table`, and `EXPLAIN ANALYZE <write>` (which
+*executes* the statement) all classify as writes and go through the same
+preview-or-`--commit` gate.
+
 Before a write runs, pgcrate EXPLAINs it and warns (on stderr) if the estimated
-cost is high — surface that warning to the human. `--no-cost-check` skips it.
+cost is high — surface that warning to the human. With `--json` the cost
+estimate is in the `write.cost` object (`estimated`, `threshold`,
+`exceeds_threshold`) regardless of whether it crossed the threshold.
+`--no-cost-check` skips the check.
 
 Statements that can't run in a transaction (`CREATE INDEX CONCURRENTLY`,
 `VACUUM`, `REINDEX`) can't be previewed; pgcrate refuses `--allow-write` for
 them and tells you to use `--commit` directly.
+
+**Known limitation:** side-effect functions called from a `SELECT`
+(`SELECT setval(...)`, `SELECT nextval(...)`, `SELECT some_writing_func()`)
+can't be detected statically — they read as queries. Without a write flag the
+read-only connection still blocks them; but under `--allow-write` such a
+`SELECT` runs in autocommit and its side effect is *not* rolled back. Don't rely
+on dry-run to preview a `SELECT` that calls a writing function.
 
 ## Migration loop
 

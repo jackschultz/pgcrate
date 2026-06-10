@@ -53,6 +53,21 @@ struct WriteOutcome {
     committed: bool,
     /// Total rows affected across all write statements.
     rows_affected: u64,
+    /// EXPLAIN cost estimate for the statement, when one was computed. Present
+    /// so `--json` consumers get the same cost signal humans see on stderr.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cost: Option<CostEstimate>,
+}
+
+/// Structured EXPLAIN cost signal surfaced in `--json` output.
+#[derive(Serialize, Clone)]
+struct CostEstimate {
+    /// Estimated total plan cost (Postgres planner units).
+    estimated: f64,
+    /// The configured warning threshold this was checked against.
+    threshold: f64,
+    /// `true` when `estimated` exceeds `threshold` (a warning was emitted).
+    exceeds_threshold: bool,
 }
 
 #[derive(Serialize)]
@@ -178,14 +193,14 @@ pub async fn sql(database_url: &str, command: Option<&str>, opts: SqlOptions) ->
     let client = session.client();
 
     // Cost gating runs before any execution. EXPLAIN only applies to DML.
-    let cost_warning = if is_write && !opts.no_cost_check && parsed.explainable() {
+    let cost = if is_write && !opts.no_cost_check && parsed.explainable() {
         cost_gate(client, sql, opts.cost_warn_threshold).await?
     } else {
         None
     };
 
     if is_write {
-        run_write(client, sql, &parsed, &opts, cost_warning).await
+        run_write(client, sql, &parsed, &opts, cost).await
     } else {
         run_read(client, sql, &opts).await
     }
@@ -214,14 +229,14 @@ async fn run_write(
     sql: &str,
     parsed: &ParsedSql,
     opts: &SqlOptions,
-    cost_warning: Option<String>,
+    cost: Option<CostEstimate>,
 ) -> Result<()> {
     // Non-transactional + --commit: execute directly, no transaction wrapper.
     if parsed.non_transactional() {
         let messages = client.simple_query(sql).await.context("execute SQL")?;
         let results = collect_results(messages, usize::MAX);
         let rows_affected = total_affected(&results);
-        finish_write(opts, true, rows_affected, results, cost_warning);
+        finish_write(opts, true, rows_affected, results, cost);
         return Ok(());
     }
 
@@ -246,13 +261,13 @@ async fn run_write(
             .batch_execute("COMMIT")
             .await
             .context("commit transaction")?;
-        finish_write(opts, true, rows_affected, results, cost_warning);
+        finish_write(opts, true, rows_affected, results, cost);
     } else {
         client
             .batch_execute("ROLLBACK")
             .await
             .context("rollback transaction")?;
-        finish_write(opts, false, rows_affected, results, cost_warning);
+        finish_write(opts, false, rows_affected, results, cost);
     }
 
     Ok(())
@@ -316,9 +331,10 @@ async fn sample_affected(
     }
 }
 
-/// EXPLAIN the input and return a warning string if estimated total cost
-/// exceeds the threshold. Returns `None` when under threshold or not plannable.
-async fn cost_gate(client: &Client, sql: &str, threshold: f64) -> Result<Option<String>> {
+/// EXPLAIN the input and return the estimated total cost (relative to the
+/// configured threshold). Returns `None` only when no cost could be computed
+/// (multi-statement, non-plannable, or EXPLAIN failed) — never blocks.
+async fn cost_gate(client: &Client, sql: &str, threshold: f64) -> Result<Option<CostEstimate>> {
     let stmt = sql.trim().trim_end_matches(';');
     // Only a single statement is reliably EXPLAIN-able here; multi-statement
     // writes skip the gate (the parser already flagged them as a write).
@@ -340,13 +356,11 @@ async fn cost_gate(client: &Client, sql: &str, threshold: f64) -> Result<Option<
         .and_then(|p| p.get("Total Cost"))
         .and_then(|c| c.as_f64());
 
-    match total_cost {
-        Some(cost) if cost > threshold => Ok(Some(format!(
-            "estimated query cost {cost:.0} exceeds threshold {threshold:.0} \
-             — this may be expensive. Pass --no-cost-check to skip this check."
-        ))),
-        _ => Ok(None),
-    }
+    Ok(total_cost.map(|estimated| CostEstimate {
+        estimated,
+        threshold,
+        exceeds_threshold: estimated > threshold,
+    }))
 }
 
 /// Resolve the effective row cap. `Some(0)` means uncapped.
@@ -375,11 +389,19 @@ fn finish_write(
     committed: bool,
     rows_affected: u64,
     results: Vec<SqlResult>,
-    cost_warning: Option<String>,
+    cost: Option<CostEstimate>,
 ) {
-    if let Some(warning) = &cost_warning {
-        if !opts.json {
-            eprintln!("pgcrate: warning: {warning}");
+    // Humans get a stderr warning only when the estimate exceeds the threshold;
+    // JSON consumers get the full structured cost inside the write object below.
+    if !opts.json {
+        if let Some(c) = &cost {
+            if c.exceeds_threshold {
+                eprintln!(
+                    "pgcrate: warning: estimated query cost {:.0} exceeds threshold {:.0} \
+                     — this may be expensive. Pass --no-cost-check to skip this check.",
+                    c.estimated, c.threshold
+                );
+            }
         }
     }
 
@@ -387,6 +409,7 @@ fn finish_write(
         let write = Some(WriteOutcome {
             committed,
             rows_affected,
+            cost,
         });
         emit_json(opts, write, results);
         return;
@@ -509,10 +532,97 @@ fn leading_non_transactional(sql: &str) -> bool {
     head.starts_with("VACUUM") || head.starts_with("REINDEX")
 }
 
+/// Does a parsed `Query` (a `SELECT`-shaped statement) actually mutate data?
+///
+/// sqlparser routes several write constructs through `Statement::Query`, so a
+/// naive `Query => Read` rule lets real writes execute unguarded. At any
+/// nesting depth (CTEs can themselves contain `WITH`, set operations nest,
+/// subqueries nest), this catches:
+///
+/// - writable CTEs (`WITH d AS (DELETE … RETURNING *) SELECT *`),
+/// - leading-CTE DML (`WITH x AS (…) UPDATE …`, whose top-level body is the
+///   `UPDATE`/`INSERT`/`DELETE`),
+/// - `SELECT … INTO new_table` (creates a table).
+fn query_writes(query: &sqlparser::ast::Query) -> bool {
+    if let Some(with) = &query.with {
+        if with.cte_tables.iter().any(|cte| query_writes(&cte.query)) {
+            return true;
+        }
+    }
+    set_expr_writes(&query.body)
+}
+
+fn set_expr_writes(body: &sqlparser::ast::SetExpr) -> bool {
+    use sqlparser::ast::SetExpr;
+    match body {
+        // A DML body inside a query is a write (writable CTE / leading-CTE DML).
+        SetExpr::Insert(_) | SetExpr::Update(_) | SetExpr::Delete(_) => true,
+        // `SELECT … INTO t` materializes a table — that's a write.
+        SetExpr::Select(select) => select.into.is_some(),
+        SetExpr::Query(inner) => query_writes(inner),
+        SetExpr::SetOperation { left, right, .. } => {
+            set_expr_writes(left) || set_expr_writes(right)
+        }
+        SetExpr::Values(_) | SetExpr::Table(_) => false,
+    }
+}
+
+/// Classify a single parsed statement. `Query` and `Explain` recurse because
+/// either can hide a write (writable CTE; `EXPLAIN ANALYZE <write>`, which
+/// *executes* the inner statement).
+fn classify_statement(stmt: &sqlparser::ast::Statement) -> (StmtKind, bool) {
+    use sqlparser::ast::Statement;
+    match stmt {
+        // A query is a write iff it embeds DML / SELECT INTO; otherwise read.
+        Statement::Query(q) => {
+            if query_writes(q) {
+                // Embedded writes can't be safely RETURNING-wrapped, and the
+                // planner can't EXPLAIN them as plain DML — treat as DDL-class
+                // (transactional dry-run, no sample, no cost gate).
+                (StmtKind::Ddl, false)
+            } else {
+                (StmtKind::Read, false)
+            }
+        }
+
+        // EXPLAIN ANALYZE *runs* the inner statement; the parenthesized
+        // `EXPLAIN (ANALYZE)` form parses with `analyze=false` in sqlparser yet
+        // still executes, so we also classify the inner statement and treat any
+        // inner write as a write regardless of the flag.
+        Statement::Explain {
+            statement, analyze, ..
+        } => {
+            let (inner_kind, _) = classify_statement(statement);
+            if *analyze || inner_kind.is_write() {
+                // EXPLAIN can't run inside our RETURNING wrapper or be cost-gated
+                // meaningfully; route it through the transactional DDL path so a
+                // dry-run still rolls back the side effects of ANALYZE.
+                (StmtKind::Ddl, false)
+            } else {
+                (StmtKind::Read, false)
+            }
+        }
+
+        Statement::Set(_)
+        | Statement::StartTransaction { .. }
+        | Statement::Commit { .. }
+        | Statement::Rollback { .. }
+        | Statement::ExplainTable { .. } => (StmtKind::Read, false),
+
+        Statement::Insert(insert) => (StmtKind::Dml, insert.returning.is_some()),
+        Statement::Update { returning, .. } => (StmtKind::Dml, returning.is_some()),
+        Statement::Delete(delete) => (StmtKind::Dml, delete.returning.is_some()),
+
+        // CREATE INDEX CONCURRENTLY cannot run in a transaction.
+        Statement::CreateIndex(idx) if idx.concurrently => (StmtKind::NonTransactional, false),
+
+        // Everything else that mutates: transactional DDL/utility.
+        _ => (StmtKind::Ddl, false),
+    }
+}
+
 /// Parse the input once and classify each statement.
 fn classify(sql: &str) -> Result<ParsedSql> {
-    use sqlparser::ast::Statement;
-
     // VACUUM / REINDEX aren't parseable by sqlparser; short-circuit so the
     // caller can route them to the "requires --commit" path.
     if leading_non_transactional(sql) {
@@ -529,26 +639,7 @@ fn classify(sql: &str) -> Result<ParsedSql> {
     let mut dml_returnings: Vec<bool> = Vec::new();
 
     for stmt in &statements {
-        let (kind, has_returning) = match stmt {
-            Statement::Query(_)
-            | Statement::Set(_)
-            | Statement::StartTransaction { .. }
-            | Statement::Commit { .. }
-            | Statement::Rollback { .. }
-            | Statement::Explain { .. }
-            | Statement::ExplainTable { .. } => (StmtKind::Read, false),
-
-            Statement::Insert(insert) => (StmtKind::Dml, insert.returning.is_some()),
-            Statement::Update { returning, .. } => (StmtKind::Dml, returning.is_some()),
-            Statement::Delete(delete) => (StmtKind::Dml, delete.returning.is_some()),
-
-            // CREATE INDEX CONCURRENTLY cannot run in a transaction.
-            Statement::CreateIndex(idx) if idx.concurrently => (StmtKind::NonTransactional, false),
-
-            // Everything else that mutates: transactional DDL/utility.
-            _ => (StmtKind::Ddl, false),
-        };
-
+        let (kind, has_returning) = classify_statement(stmt);
         if kind == StmtKind::Dml {
             dml_returnings.push(has_returning);
         }
@@ -692,5 +783,100 @@ mod tests {
         assert_eq!(row_cap(None), DEFAULT_ROW_CAP);
         assert_eq!(row_cap(Some(0)), usize::MAX);
         assert_eq!(row_cap(Some(10)), 10);
+    }
+
+    // --- Bypass regression tests: writes that hide inside a Query/Explain. ---
+    // Each of these previously classified as Read and, under --allow-write,
+    // executed in autocommit with no transaction wrapper and no rollback.
+
+    #[test]
+    fn writable_cte_delete_is_write() {
+        let p = classify("WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d").unwrap();
+        assert!(
+            p.has_write(),
+            "writable-CTE DELETE must classify as a write"
+        );
+        // Not wrappable/explainable — the embedded write goes the DDL dry-run path.
+        assert!(!p.single_dml_no_returning);
+        assert!(!p.explainable());
+    }
+
+    #[test]
+    fn writable_cte_update_and_insert_are_writes() {
+        assert!(
+            classify("WITH u AS (UPDATE t SET a = 1 RETURNING *) SELECT * FROM u")
+                .unwrap()
+                .has_write()
+        );
+        assert!(
+            classify("WITH i AS (INSERT INTO t VALUES (1) RETURNING *) SELECT * FROM i")
+                .unwrap()
+                .has_write()
+        );
+    }
+
+    #[test]
+    fn leading_cte_dml_is_write() {
+        // Top-level body is the UPDATE; sqlparser still wraps it in Statement::Query.
+        let p = classify("WITH x AS (SELECT 1) UPDATE t SET a = 1").unwrap();
+        assert!(p.has_write(), "leading-CTE UPDATE must classify as a write");
+    }
+
+    #[test]
+    fn nested_writable_cte_is_write() {
+        // A DELETE buried inside a CTE's own WITH clause.
+        let sql = "WITH outer1 AS (\
+                       WITH inner1 AS (DELETE FROM t RETURNING *) SELECT * FROM inner1\
+                   ) SELECT * FROM outer1";
+        assert!(
+            classify(sql).unwrap().has_write(),
+            "DELETE nested in a CTE's WITH must classify as a write"
+        );
+    }
+
+    #[test]
+    fn select_into_is_write() {
+        let p = classify("SELECT id INTO new_table FROM t").unwrap();
+        assert!(
+            p.has_write(),
+            "SELECT … INTO materializes a table — a write"
+        );
+    }
+
+    #[test]
+    fn explain_analyze_write_is_write() {
+        // EXPLAIN ANALYZE executes the inner statement.
+        assert!(classify("EXPLAIN ANALYZE DELETE FROM t")
+            .unwrap()
+            .has_write());
+        assert!(classify("EXPLAIN ANALYZE UPDATE t SET a = 1")
+            .unwrap()
+            .has_write());
+        // Parenthesized form parses analyze=false in sqlparser but still executes;
+        // the inner-statement check catches it.
+        assert!(classify("EXPLAIN (ANALYZE) DELETE FROM t")
+            .unwrap()
+            .has_write());
+        // Plain EXPLAIN of a write doesn't execute, but classifying it as a write
+        // is the conservative, correct call.
+        assert!(classify("EXPLAIN DELETE FROM t").unwrap().has_write());
+    }
+
+    #[test]
+    fn plain_reads_stay_reads() {
+        // Guard against over-eager classification breaking ordinary queries.
+        assert!(!classify("SELECT 1").unwrap().has_write());
+        assert!(!classify("EXPLAIN SELECT 1").unwrap().has_write());
+        assert!(!classify("EXPLAIN (FORMAT JSON) SELECT 1")
+            .unwrap()
+            .has_write());
+        assert!(!classify("WITH q AS (SELECT 1) SELECT * FROM q")
+            .unwrap()
+            .has_write());
+        assert!(!classify("SELECT * FROM (SELECT 1) sub")
+            .unwrap()
+            .has_write());
+        assert!(!classify("(SELECT 1) UNION (SELECT 2)").unwrap().has_write());
+        assert!(!classify("VALUES (1), (2)").unwrap().has_write());
     }
 }

@@ -306,6 +306,50 @@ fn test_sql_dry_run_json_shape() {
     );
 }
 
+/// The EXPLAIN cost estimate is surfaced in `--json` output (the `write.cost`
+/// object) so JSON consumers get the same signal humans see on stderr.
+#[test]
+fn test_sql_dry_run_json_includes_cost() {
+    skip_if_no_db!();
+    let db = TestDatabase::new();
+    let project = TestProject::from_fixture("with_migrations", &db);
+
+    project.run_pgcrate_ok(&["migrate", "up"]);
+    db.run_sql_ok("INSERT INTO users (email, name) VALUES ('cost@test.com', 'Orig')");
+
+    let output = project.run_pgcrate(&[
+        "sql",
+        "-c",
+        "UPDATE users SET name = 'New' WHERE email = 'cost@test.com'",
+        "--allow-write",
+        "--json",
+    ]);
+    assert!(output.status.success(), "dry-run JSON should succeed");
+
+    let json = parse_json(&output);
+    let cost = json
+        .get("write")
+        .and_then(|w| w.get("cost"))
+        .expect("write.cost present in JSON output");
+    assert!(
+        cost.get("estimated").and_then(|v| v.as_f64()).is_some(),
+        "cost.estimated should be a number: {}",
+        json
+    );
+    assert!(
+        cost.get("threshold").and_then(|v| v.as_f64()).is_some(),
+        "cost.threshold should be a number: {}",
+        json
+    );
+    assert!(
+        cost.get("exceeds_threshold")
+            .and_then(|v| v.as_bool())
+            .is_some(),
+        "cost.exceeds_threshold should be a bool: {}",
+        json
+    );
+}
+
 /// Non-transactional statements (CREATE INDEX CONCURRENTLY) cannot be previewed;
 /// --allow-write alone must refuse with guidance to use --commit.
 #[test]
@@ -331,6 +375,128 @@ fn test_sql_concurrent_index_requires_commit() {
         err.contains("--commit"),
         "Refusal should point at --commit: {}",
         err
+    );
+}
+
+// ============================================================================
+// Bypass regression: writes hidden inside a Query/Explain must not slip through
+// the dry-run guard and commit in autocommit.
+// ============================================================================
+
+/// A writable CTE (`WITH d AS (DELETE … RETURNING *) SELECT …`) parses as a
+/// plain query. Under `--allow-write` it must still dry-run and roll back —
+/// previously it executed in autocommit and committed the DELETE.
+#[test]
+fn test_sql_writable_cte_delete_dry_runs() {
+    skip_if_no_db!();
+    let db = TestDatabase::new();
+    let project = TestProject::from_fixture("with_migrations", &db);
+
+    project.run_pgcrate_ok(&["migrate", "up"]);
+    db.run_sql_ok("INSERT INTO users (email, name) VALUES ('cte@test.com', 'Keep')");
+
+    let output = project.run_pgcrate(&[
+        "sql",
+        "-c",
+        "WITH d AS (DELETE FROM users WHERE email = 'cte@test.com' RETURNING *) SELECT * FROM d",
+        "--allow-write",
+    ]);
+    assert!(
+        output.status.success(),
+        "writable-CTE delete dry-run should succeed: {}",
+        stderr(&output)
+    );
+    assert!(
+        stdout(&output).to_uppercase().contains("DRY RUN"),
+        "should be announced as a dry run: {}",
+        stdout(&output)
+    );
+
+    // The row must survive — the embedded DELETE was rolled back.
+    let count = db.query("SELECT count(*) FROM users WHERE email = 'cte@test.com'");
+    assert_eq!(
+        count, "1",
+        "writable-CTE DELETE must roll back under --allow-write (row must survive)"
+    );
+}
+
+/// A writable CTE under `--commit` actually applies the embedded write.
+#[test]
+fn test_sql_writable_cte_delete_commits() {
+    skip_if_no_db!();
+    let db = TestDatabase::new();
+    let project = TestProject::from_fixture("with_migrations", &db);
+
+    project.run_pgcrate_ok(&["migrate", "up"]);
+    db.run_sql_ok("INSERT INTO users (email, name) VALUES ('cte2@test.com', 'Gone')");
+
+    project.run_pgcrate_ok(&[
+        "sql",
+        "-c",
+        "WITH d AS (DELETE FROM users WHERE email = 'cte2@test.com' RETURNING *) SELECT * FROM d",
+        "--commit",
+    ]);
+
+    let count = db.query("SELECT count(*) FROM users WHERE email = 'cte2@test.com'");
+    assert_eq!(count, "0", "writable-CTE DELETE under --commit must apply");
+}
+
+/// `EXPLAIN ANALYZE <write>` executes the statement. Under `--allow-write` it
+/// must dry-run and roll back rather than committing the side effect.
+#[test]
+fn test_sql_explain_analyze_write_dry_runs() {
+    skip_if_no_db!();
+    let db = TestDatabase::new();
+    let project = TestProject::from_fixture("with_migrations", &db);
+
+    project.run_pgcrate_ok(&["migrate", "up"]);
+    db.run_sql_ok("INSERT INTO users (email, name) VALUES ('ea@test.com', 'Keep')");
+
+    let output = project.run_pgcrate(&[
+        "sql",
+        "-c",
+        "EXPLAIN ANALYZE DELETE FROM users WHERE email = 'ea@test.com'",
+        "--allow-write",
+    ]);
+    assert!(
+        output.status.success(),
+        "EXPLAIN ANALYZE write dry-run should succeed: {}",
+        stderr(&output)
+    );
+
+    let count = db.query("SELECT count(*) FROM users WHERE email = 'ea@test.com'");
+    assert_eq!(
+        count, "1",
+        "EXPLAIN ANALYZE DELETE must roll back under --allow-write (row must survive)"
+    );
+}
+
+/// `SELECT … INTO new_table` materializes a table — a write. Under
+/// `--allow-write` the table must not persist (rolled back).
+#[test]
+fn test_sql_select_into_dry_runs() {
+    skip_if_no_db!();
+    let db = TestDatabase::new();
+    let project = TestProject::from_fixture("with_migrations", &db);
+
+    project.run_pgcrate_ok(&["migrate", "up"]);
+
+    let output = project.run_pgcrate(&[
+        "sql",
+        "-c",
+        "SELECT * INTO zz_select_into FROM users",
+        "--allow-write",
+    ]);
+    assert!(
+        output.status.success(),
+        "SELECT INTO dry-run should succeed: {}",
+        stderr(&output)
+    );
+
+    let exists = db.query("SELECT to_regclass('zz_select_into') IS NOT NULL");
+    assert_eq!(
+        exists, "f",
+        "SELECT INTO must roll back under --allow-write (table must not persist)"
     );
 }
 
