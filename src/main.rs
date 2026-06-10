@@ -264,9 +264,19 @@ enum Commands {
         /// Use -c for psql compatibility: pgcrate sql -c "SELECT 1"
         #[arg(short = 'c', value_name = "SQL")]
         command: Option<String>,
-        /// Allow write statements (INSERT/UPDATE/DELETE/DDL)
+        /// Preview a write: run it in a transaction, report the effect, then ROLL BACK.
+        /// Nothing is changed unless you also pass --commit.
         #[arg(long)]
         allow_write: bool,
+        /// Actually apply a write (implies --allow-write).
+        #[arg(long)]
+        commit: bool,
+        /// Cap rows printed/returned for a SELECT (default 1000; 0 = uncapped).
+        #[arg(long, value_name = "N")]
+        limit: Option<usize>,
+        /// Skip the EXPLAIN cost check before running a write.
+        #[arg(long)]
+        no_cost_check: bool,
     },
     /// Save and restore database state
     Snapshot {
@@ -2206,12 +2216,17 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
             }
         }
         Commands::Sql {
-            command,
+            ref command,
             allow_write,
+            commit,
+            limit,
+            no_cost_check,
         } => {
             let config =
                 Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
-            // --allow-write implies --read-write (otherwise writes fail due to read-only URL)
+            // --commit implies --allow-write; either one needs read-write mode
+            // (otherwise writes fail due to a read-only URL).
+            let allow_write = allow_write || commit;
             let effective_read_write = cli.read_write || allow_write;
             let conn_result = connection::resolve_and_validate(
                 &config,
@@ -2222,14 +2237,17 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 effective_read_write,
                 cli.quiet,
             )?;
-            commands::sql(
-                &conn_result.url,
-                command.as_deref(),
+            let opts = commands::SqlOptions {
                 allow_write,
-                cli.quiet,
-                cli.json,
-            )
-            .await?;
+                commit,
+                limit,
+                no_cost_check,
+                cost_warn_threshold: config.sql_cost_warn_threshold(),
+                timeouts: parse_timeout_config(&cli)?,
+                quiet: cli.quiet,
+                json: cli.json,
+            };
+            commands::sql(&conn_result.url, command.as_deref(), opts).await?;
         }
         Commands::Db { command } => {
             // db commands need database URL but not config

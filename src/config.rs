@@ -18,6 +18,7 @@ pub struct Config {
     pub model: Option<ModelConfig>,
     pub seeds: Option<SeedsConfig>,
     pub tools: Option<ToolsConfig>,
+    pub sql: Option<SqlConfig>,
     /// Named database connections
     #[serde(default)]
     pub connections: HashMap<String, ConnectionConfig>,
@@ -90,6 +91,13 @@ pub struct ToolsConfig {
     pub pg_dump: Option<String>,
     pub pg_restore: Option<String>,
     pub psql: Option<String>,
+}
+
+/// `sql` / `query` command configuration
+#[derive(Deserialize, Debug, Default)]
+pub struct SqlConfig {
+    /// EXPLAIN total-cost threshold above which a write warns before running.
+    pub cost_warn_threshold: Option<f64>,
 }
 
 /// Anonymization configuration (pgcrate.anonymize.toml)
@@ -376,6 +384,14 @@ impl Config {
             .as_ref()
             .and_then(|m| m.sources.clone())
             .unwrap_or_default()
+    }
+
+    /// Get the EXPLAIN cost-warning threshold for `sql` writes.
+    pub fn sql_cost_warn_threshold(&self) -> f64 {
+        self.sql
+            .as_ref()
+            .and_then(|s| s.cost_warn_threshold)
+            .unwrap_or(crate::commands::DEFAULT_COST_WARN_THRESHOLD)
     }
 
     /// Get path for a PostgreSQL tool (pg_dump, pg_restore, psql)

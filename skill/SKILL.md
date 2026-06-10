@@ -5,8 +5,9 @@ description: >-
   schema, writing or applying migrations, loading seed/test data, or
   diagnosing health and performance ("why is the DB slow", locks, bloat,
   sequence exhaustion, slow queries). pgcrate is a single binary that wraps
-  psql-class work with read-only-by-default guardrails, timeouts, structured
-  JSON, and semantic exit codes so the work is safe to run unsupervised.
+  psql-class work with guardrails — reads are read-only and capped, writes
+  preview themselves (dry-run + rollback) before they commit, plus timeouts,
+  structured JSON, and semantic exit codes so the work is safe to run unsupervised.
 ---
 
 # pgcrate: the Postgres interface for agents
@@ -18,8 +19,10 @@ can't hang forever, and output is dense and machine-readable.
 
 ## Why pgcrate over raw psql
 
-- **Read-only by default.** `sql` refuses writes unless you pass `--allow-write`;
-  diagnostics never write. You can't `DROP` something by accident.
+- **Writes preview by default.** `sql` blocks writes; `--allow-write` *dry-runs*
+  one (transaction → report → rollback), and only `--commit` actually applies it.
+  Diagnostics never write. You can't `DROP` something by accident, and you can't
+  forget to preview a destructive change.
 - **Timeouts on everything.** Connect/statement/lock timeouts are enforced
   (defaults 5s / 30s / 500ms; override with `--connect-timeout`,
   `--statement-timeout`, `--lock-timeout`). A bad query fails fast instead of
@@ -58,12 +61,54 @@ diagnostics below. (A one-shot `brief` summary command is coming; not available 
 pgcrate sql -c "SELECT ..."             # read-only; blocks writes
 echo "SELECT ..." | pgcrate sql         # reads from stdin if no -c
 pgcrate sql -c "SELECT ..." --json      # structured rows for downstream use
-pgcrate sql -c "UPDATE ..." --allow-write   # opt in to writes, explicitly
+pgcrate sql -c "SELECT ..." --limit 50  # cap rows (default 1000; --limit 0 uncaps)
 ```
 
-Default is read-only: a write statement errors with a prompt to re-run with
-`--allow-write`. Only escalate when the human asked for a write. `query` is an
-alias for `sql`.
+Reads are read-only and capped. `SELECT` output is truncated at 1000 rows by
+default with a `… +N more rows` trailer so a stray `SELECT *` on a huge table
+can't flood your context; raise it with `--limit N`, or `--limit 0` to uncap.
+`query` is an alias for `sql`. Statement/lock/connect timeouts apply here just
+like the diagnostics (defaults 30s / 500ms / 5s; override with the global
+`--statement-timeout` etc.).
+
+### Writes preview themselves (dry-run by default)
+
+A write — `UPDATE`/`DELETE`/`INSERT` or DDL — never just happens. By default
+it's blocked; the two ways to run one are:
+
+```bash
+pgcrate sql -c "UPDATE ..." --allow-write   # PREVIEW: runs in a txn, reports, ROLLS BACK
+pgcrate sql -c "UPDATE ..." --commit        # APPLY: actually commits (implies --allow-write)
+```
+
+`--allow-write` is a **dry run**: the statement runs inside a transaction,
+reports how many rows it would affect (plus a sample of the affected rows for a
+single DML statement), then **rolls back** — nothing changes. Preview first,
+show the human the affected count/sample, then re-run with `--commit` to apply.
+`--commit` is the only flag that writes; you can't forget to preview.
+
+Writes that hide inside a query are caught, not just bare `INSERT`/`UPDATE`/
+`DELETE`: writable CTEs (`WITH d AS (DELETE … RETURNING *) SELECT * FROM d`),
+leading-CTE DML, `SELECT … INTO new_table`, and `EXPLAIN ANALYZE <write>` (which
+*executes* the statement) all classify as writes and go through the same
+preview-or-`--commit` gate.
+
+Before a write runs, pgcrate EXPLAINs it and warns (on stderr) if the estimated
+cost is high — surface that warning to the human. With `--json` the cost
+estimate is in the `write.cost` object (`estimated`, `threshold`,
+`exceeds_threshold`) regardless of whether it crossed the threshold.
+`--no-cost-check` skips the check.
+
+Statements that can't run in a transaction (`CREATE INDEX CONCURRENTLY`,
+`VACUUM`, `REINDEX`) can't be previewed; pgcrate refuses `--allow-write` for
+them and tells you to use `--commit` directly.
+
+**Known limitation:** side-effect functions called from a `SELECT`
+(`SELECT setval(...)`, `SELECT nextval(...)`, `SELECT some_writing_func()`)
+can't be detected statically — they read as queries. Without a write flag the
+read-only connection still blocks them; but under `--allow-write` such a
+`SELECT` runs in autocommit and its side effect is *not* rolled back. Don't rely
+on dry-run to preview a `SELECT` that calls a writing function.
 
 ## Migration loop
 
@@ -146,8 +191,12 @@ Every `fix` supports `--dry-run` (preview) and `--verify` (re-check after). Run
 
 - Destructive operations require `--yes` — never pass it speculatively; show the
   plan/`--dry-run` first and let the human confirm intent.
-- Never add `--read-write` (global) or `sql --allow-write` unless the task is
-  explicitly a write. Default read-only is the guardrail; keep it on.
+- For `sql` writes: `--allow-write` is safe to reach for — it only previews
+  (dry-run + rollback). Use it to show the human the affected count/sample, then
+  only pass `--commit` once they've confirmed. Treat `--commit` like `--yes`:
+  never speculative, always after a preview the human has seen.
+- Never add `--read-write` (global) unless the task is explicitly a write.
+  Default read-only is the guardrail; keep it on.
 - Prefer `--json` whenever output is consumed by you for a next step; use human
   tables when reporting to the person.
 - Treat exit `10+` as "I couldn't check" (fix connectivity/perms), distinct from
@@ -163,8 +212,9 @@ Every `fix` supports `--dry-run` (preview) and `--verify` (re-check after). Run
 | Table dependents/dependencies | `pgcrate inspect table <name> --dependents` / `--dependencies` |
 | Roles / grants / extensions | `pgcrate inspect roles` / `grants` / `extensions` |
 | Compare two schemas | `pgcrate inspect diff --to <url>` |
-| Run a read query | `pgcrate sql -c "SELECT ..."` (add `--json`) |
-| Run a write | `pgcrate sql -c "..." --allow-write` |
+| Run a read query | `pgcrate sql -c "SELECT ..."` (add `--json`, `--limit N`) |
+| Preview a write (dry-run + rollback) | `pgcrate sql -c "..." --allow-write` |
+| Apply a write (commit) | `pgcrate sql -c "..." --commit` |
 | New migration | `pgcrate migrate new <name>` |
 | Apply / status | `pgcrate migrate up` / `pgcrate migrate status` |
 | Roll back (dev) | `pgcrate migrate down --steps N --yes` |
