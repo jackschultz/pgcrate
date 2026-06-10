@@ -344,12 +344,20 @@ async fn execute_dml_with_sample(
         Some(n) => n.min(DRY_RUN_SAMPLE_LIMIT),
         None => DRY_RUN_SAMPLE_LIMIT,
     };
-    // `to_jsonb(t)` per row keeps column names; `json_agg` collects the slice.
+    // `row_to_json` (text `json`, not `jsonb`) preserves the statement's column
+    // order; `jsonb` would re-sort keys and scramble the preview. `json_agg`
+    // collects the slice; the keys array carries the column order explicitly so
+    // Rust never has to infer it from a sorted map.
     let wrapped = format!(
-        "WITH __pgcrate_w AS ({stmt} RETURNING *) \
+        "WITH __pgcrate_w AS ({stmt} RETURNING *), \
+              __pgcrate_s AS (SELECT * FROM __pgcrate_w LIMIT {limit}), \
+              __pgcrate_first AS (SELECT * FROM __pgcrate_s LIMIT 1) \
          SELECT (SELECT count(*) FROM __pgcrate_w) AS __pgcrate_affected, \
-                (SELECT json_agg(to_jsonb(__s)) \
-                 FROM (SELECT * FROM __pgcrate_w LIMIT {limit}) __s) AS __pgcrate_samples"
+                (SELECT json_agg(row_to_json(__s)) FROM __pgcrate_s __s) AS __pgcrate_samples, \
+                (SELECT array_agg(k) FROM ( \
+                    SELECT json_object_keys(row_to_json(__f)) AS k \
+                    FROM __pgcrate_first __f \
+                 ) __k) AS __pgcrate_columns"
     );
 
     let row = client
@@ -360,22 +368,31 @@ async fn execute_dml_with_sample(
     let affected: i64 = row.get("__pgcrate_affected");
     let rows_affected = affected.max(0) as u64;
 
+    let columns: Option<Vec<String>> = row.get("__pgcrate_columns");
+
     let mut results = vec![SqlResult::CommandComplete {
         rows: rows_affected,
     }];
-    if let Some(sample) = sample_from_json(row.get("__pgcrate_samples")) {
+    if let Some(sample) = sample_from_json(row.get("__pgcrate_samples"), columns) {
         results.push(sample);
     }
     Ok((results, rows_affected))
 }
 
-/// Turn the `json_agg(to_jsonb(...))` sample column into a `Sample` result.
-/// Column order follows the first row's keys; cells are stringified to match
-/// the simple-query text representation used elsewhere.
-fn sample_from_json(samples: Option<serde_json::Value>) -> Option<SqlResult> {
+/// Turn the `json_agg(row_to_json(...))` sample column into a `Sample` result.
+/// `columns` carries the statement's column order (from `array_agg` of
+/// `json_object_keys`); cells are stringified to match the simple-query text
+/// representation used elsewhere.
+fn sample_from_json(
+    samples: Option<serde_json::Value>,
+    columns: Option<Vec<String>>,
+) -> Option<SqlResult> {
     let rows = samples?.as_array()?.clone();
-    let first = rows.first()?.as_object()?;
-    let columns: Vec<String> = first.keys().cloned().collect();
+    // Prefer the SQL-provided order; fall back to the first row's keys only if
+    // it's somehow absent (e.g. all-NULL column array).
+    let columns = columns
+        .filter(|c| !c.is_empty())
+        .or_else(|| Some(rows.first()?.as_object()?.keys().cloned().collect()))?;
 
     let table_rows: Vec<Vec<Option<String>>> = rows
         .iter()

@@ -802,6 +802,55 @@ fn test_sql_commit_insert_with_returning_executes_once() {
     );
 }
 
+/// The dry-run sample must present columns in the statement's natural order
+/// (table-definition order for `INSERT … RETURNING *`), not alphabetized. The
+/// CTE wrap derives the sample from `row_to_json` (order-preserving text JSON)
+/// plus an explicit column-name array; a regression to `to_jsonb`/sorted-map
+/// key inference would scramble this to `email, id, is_admin, name`.
+#[test]
+fn test_sql_dry_run_sample_preserves_column_order() {
+    skip_if_no_db!();
+    let db = TestDatabase::new();
+    let project = TestProject::from_fixture("with_migrations", &db);
+    project.run_pgcrate_ok(&["migrate", "up"]);
+
+    let output = project.run_pgcrate(&[
+        "sql",
+        "-c",
+        "INSERT INTO users (email, name, is_admin) VALUES ('order@test.com', 'Ord', true)",
+        "--allow-write",
+        "--json",
+    ]);
+    assert!(output.status.success(), "dry-run JSON should succeed");
+
+    let json = parse_json(&output);
+    let sample = json
+        .get("results")
+        .and_then(|r| r.as_array())
+        .and_then(|arr| {
+            arr.iter()
+                .find(|r| r.get("type").and_then(|t| t.as_str()) == Some("sample"))
+        })
+        .expect("sample result present");
+
+    let columns: Vec<&str> = sample
+        .get("columns")
+        .and_then(|c| c.as_array())
+        .expect("sample columns present")
+        .iter()
+        .map(|c| c.as_str().unwrap())
+        .collect();
+
+    // users is defined as (id, email, name, is_admin, created_at); RETURNING *
+    // yields that exact order — not the alphabetical email/id/is_admin/name.
+    assert_eq!(
+        columns,
+        vec!["id", "email", "name", "is_admin", "created_at"],
+        "sample columns must follow table-definition order: {}",
+        json
+    );
+}
+
 // ============================================================================
 // Row caps
 // ============================================================================
