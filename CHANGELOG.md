@@ -17,7 +17,7 @@
 
 ### Improvements
 
-- **`pgcrate inspect capabilities`**: Reports the `diagnostics.wal` capability
+- **`pgcrate capabilities`**: Reports the `diagnostics.wal` capability
   - Checks `pg_stat_archiver` SELECT and `pg_ls_waldir()` access
   - Degrades gracefully when `pg_ls_waldir()` is unavailable (directory size and pending file counts omitted)
 
