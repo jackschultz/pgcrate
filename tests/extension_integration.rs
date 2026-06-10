@@ -1,4 +1,4 @@
-//! Integration tests for the `pgcrate extension` commands.
+//! Integration tests for the `pgcrate inspect extensions` commands.
 //!
 //! These tests require a running PostgreSQL instance.
 //! Set TEST_DATABASE_URL or use the default postgres://localhost/postgres.
@@ -28,7 +28,7 @@ fn run_pgcrate(args: &[&str], db_url: &str) -> std::process::Output {
 #[test]
 fn test_extension_list_shows_plpgsql() {
     let db_url = get_test_db_url();
-    let output = run_pgcrate(&["extension", "list"], &db_url);
+    let output = run_pgcrate(&["inspect", "extensions"], &db_url);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -53,7 +53,7 @@ fn test_extension_list_shows_plpgsql() {
 #[test]
 fn test_extension_list_available() {
     let db_url = get_test_db_url();
-    let output = run_pgcrate(&["extension", "list", "--available"], &db_url);
+    let output = run_pgcrate(&["inspect", "extensions", "--available"], &db_url);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -75,7 +75,7 @@ fn test_extension_list_available() {
 #[test]
 fn test_extension_list_quiet() {
     let db_url = get_test_db_url();
-    let output = run_pgcrate(&["extension", "list", "--quiet"], &db_url);
+    let output = run_pgcrate(&["inspect", "extensions", "--quiet"], &db_url);
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(

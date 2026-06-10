@@ -1,4 +1,4 @@
-//! Integration tests for the `pgcrate role` and `pgcrate grants` commands.
+//! Integration tests for the `pgcrate inspect roles` and `pgcrate inspect grants` commands.
 
 use std::env;
 use std::process::Command;
@@ -39,7 +39,7 @@ fn unique_name(base: &str) -> String {
 #[test]
 fn test_role_list_shows_postgres() {
     let db_url = get_test_db_url();
-    let output = run_pgcrate(&["role", "list"], &db_url);
+    let output = run_pgcrate(&["inspect", "roles"], &db_url);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -64,7 +64,7 @@ fn test_role_list_shows_postgres() {
 #[test]
 fn test_role_list_users_filter() {
     let db_url = get_test_db_url();
-    let output = run_pgcrate(&["role", "list", "--users"], &db_url);
+    let output = run_pgcrate(&["inspect", "roles", "--users"], &db_url);
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "role list --users should succeed");
@@ -79,7 +79,7 @@ fn test_role_list_users_filter() {
 #[test]
 fn test_role_describe_postgres() {
     let db_url = get_test_db_url();
-    let output = run_pgcrate(&["role", "describe", "postgres"], &db_url);
+    let output = run_pgcrate(&["inspect", "roles", "--describe", "postgres"], &db_url);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -109,7 +109,10 @@ fn test_role_describe_postgres() {
 #[test]
 fn test_role_describe_not_found() {
     let db_url = get_test_db_url();
-    let output = run_pgcrate(&["role", "describe", "nonexistent_role_xyz"], &db_url);
+    let output = run_pgcrate(
+        &["inspect", "roles", "--describe", "nonexistent_role_xyz"],
+        &db_url,
+    );
 
     assert!(
         !output.status.success(),
@@ -145,7 +148,10 @@ fn test_grants_on_table() {
     assert!(setup.status.success(), "Setup should succeed");
 
     // Test grants command
-    let output = run_pgcrate(&["grants", &format!("public.{}", table_name)], &db_url);
+    let output = run_pgcrate(
+        &["inspect", "grants", &format!("public.{}", table_name)],
+        &db_url,
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -190,7 +196,7 @@ fn test_grants_for_role() {
     let setup = run_psql(&setup_sql, &db_url);
     assert!(setup.status.success(), "Setup should succeed");
 
-    let output = run_pgcrate(&["grants", "--role", &role_name], &db_url);
+    let output = run_pgcrate(&["inspect", "grants", "--role", &role_name], &db_url);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -219,7 +225,7 @@ fn test_grants_for_role() {
 #[test]
 fn test_grants_for_schema() {
     let db_url = get_test_db_url();
-    let output = run_pgcrate(&["grants", "--schema", "public"], &db_url);
+    let output = run_pgcrate(&["inspect", "grants", "--schema", "public"], &db_url);
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "grants --schema should succeed");
@@ -234,7 +240,7 @@ fn test_grants_for_schema() {
 #[test]
 fn test_grants_requires_argument() {
     let db_url = get_test_db_url();
-    let output = run_pgcrate(&["grants"], &db_url);
+    let output = run_pgcrate(&["inspect", "grants"], &db_url);
 
     assert!(
         !output.status.success(),
@@ -252,7 +258,10 @@ fn test_grants_requires_argument() {
 #[test]
 fn test_grants_table_not_found() {
     let db_url = get_test_db_url();
-    let output = run_pgcrate(&["grants", "public.nonexistent_table_xyz"], &db_url);
+    let output = run_pgcrate(
+        &["inspect", "grants", "public.nonexistent_table_xyz"],
+        &db_url,
+    );
 
     assert!(
         !output.status.success(),

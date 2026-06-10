@@ -138,6 +138,7 @@ fn test_all_timeout_flags_combined() {
     project.run_pgcrate_ok(&["migrate", "up"]);
 
     let output = project.run_pgcrate(&[
+        "dba",
         "triage",
         "--connect-timeout",
         "2s",

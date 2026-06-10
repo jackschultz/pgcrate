@@ -111,12 +111,12 @@ fn test_doctor_quiet_suppresses_all_output() {
     let project = create_temp_project_dir("quiet");
     write_basic_config(&project);
 
-    let output = run_doctor(&project, None, &["--quiet", "doctor"]);
+    let output = run_doctor(&project, None, &["--quiet", "dba", "doctor"]);
     assert_eq!(output.status.code(), Some(2));
     assert!(output.stdout.is_empty(), "stdout should be empty");
     assert!(output.stderr.is_empty(), "stderr should be empty");
 
-    let output = run_doctor(&project, None, &["--quiet", "--json", "doctor"]);
+    let output = run_doctor(&project, None, &["--quiet", "--json", "dba", "doctor"]);
     assert_eq!(output.status.code(), Some(2));
     assert!(output.stdout.is_empty(), "stdout should be empty");
     assert!(output.stderr.is_empty(), "stderr should be empty");
@@ -133,7 +133,7 @@ fn test_doctor_json_fatal_connection_shape() {
         &project,
         // Parse-level failure (no network dependency) should still be treated as fatal connection.
         Some("postgres://localhost:abc/postgres"),
-        &["--json", "doctor"],
+        &["--json", "dba", "doctor"],
     );
 
     assert_eq!(output.status.code(), Some(2));
@@ -159,7 +159,7 @@ fn test_doctor_json_fatal_config_shape() {
     // Invalid TOML should be treated as fatal config error (exit 2).
     fs::write(project.join("pgcrate.toml"), "not = [valid").unwrap();
 
-    let output = run_doctor(&project, None, &["--json", "doctor"]);
+    let output = run_doctor(&project, None, &["--json", "dba", "doctor"]);
     assert_eq!(output.status.code(), Some(2));
 
     let json: serde_json::Value =
@@ -195,7 +195,7 @@ fn test_doctor_healthy_database_exit_0() {
     );
     assert!(stdout.contains("pgcrate doctor"));
 
-    let verbose = run_doctor(&project, Some(&test_url), &["--verbose", "doctor"]);
+    let verbose = run_doctor(&project, Some(&test_url), &["--verbose", "dba", "doctor"]);
     let verbose_stdout = String::from_utf8_lossy(&verbose.stdout);
     assert!(verbose.status.success());
     assert!(
@@ -219,7 +219,7 @@ fn test_doctor_json_success_shape() {
     write_basic_config(&project);
     setup_pgcrate_tables(&test_url);
 
-    let output = run_doctor(&project, Some(&test_url), &["--json", "doctor"]);
+    let output = run_doctor(&project, Some(&test_url), &["--json", "dba", "doctor"]);
     assert!(output.status.success());
 
     let json: serde_json::Value =
