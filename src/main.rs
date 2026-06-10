@@ -25,7 +25,7 @@ mod suggest;
 mod tips;
 use config::Config;
 use diagnostic::{setup_ctrlc_handler, DiagnosticSession, TimeoutConfig};
-use output::{HelpResponse, JsonError, LlmHelpResponse, Output, VersionResponse};
+use output::{Density, HelpResponse, JsonError, LlmHelpResponse, Output, VersionResponse};
 
 /// Embedded LLM help content (compiled into binary)
 const LLM_HELP: &str = include_str!("../llms.txt");
@@ -138,6 +138,14 @@ struct Cli {
     /// Output as JSON instead of human-readable text
     #[arg(long, global = true)]
     json: bool,
+
+    /// Force decorated human output (tables, rules) even when piped
+    #[arg(long, global = true, conflicts_with = "dense")]
+    pretty: bool,
+
+    /// Force dense, token-efficient human output even on a terminal
+    #[arg(long, global = true, conflicts_with = "pretty")]
+    dense: bool,
 
     /// Path to anonymize rules file (default: ./pgcrate.anonymize.toml)
     #[arg(long, global = true)]
@@ -1001,7 +1009,13 @@ async fn main() {
         }
     };
 
-    let output = Output::new(cli.json, cli.quiet, cli.verbose);
+    // Readable-output density: TTY → Pretty, piped/captured → Dense, with
+    // --pretty/--dense overriding detection. Irrelevant in JSON mode.
+    let density = {
+        use std::io::IsTerminal;
+        Density::resolve(cli.pretty, cli.dense, std::io::stdout().is_terminal())
+    };
+    let output = Output::new(cli.json, density, cli.quiet, cli.verbose);
 
     // Gate unsupported commands in JSON mode
     if cli.json && !json_supported(&cli.command) {
@@ -1410,7 +1424,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                     if cli.json {
                         commands::triage::print_json(&results, timeouts)?;
                     } else {
-                        commands::triage::print_human(&results, cli.quiet);
+                        commands::triage::print_human(&results, cli.quiet, output.density());
                     }
 
                     let exit_code = results.exit_code();
@@ -2175,7 +2189,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
             if cli.json {
                 commands::context::print_json(&result, Some(session.effective_timeouts()))?;
             } else {
-                commands::context::print_human(&result);
+                commands::context::print_human(&result, output.density());
             }
         }
         Commands::Capabilities => {
@@ -2212,7 +2226,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
             if cli.json {
                 commands::capabilities::print_json(&result, Some(session.effective_timeouts()))?;
             } else {
-                commands::capabilities::print_human(&result);
+                commands::capabilities::print_human(&result, output.density());
             }
         }
         Commands::Sql {
@@ -2246,6 +2260,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 timeouts: parse_timeout_config(&cli)?,
                 quiet: cli.quiet,
                 json: cli.json,
+                density: output.density(),
             };
             commands::sql(&conn_result.url, command.as_deref(), opts).await?;
         }

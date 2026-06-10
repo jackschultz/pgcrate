@@ -694,35 +694,54 @@ pub async fn describe(
         return Ok(());
     }
 
-    // Human mode: formatted output
+    // Human mode: formatted output. Dense drops the decorative rule and the
+    // blank lines framing each section; pretty keeps them.
+    let density = output.density();
+    let dense = density.is_dense();
     let mut result = String::new();
-    result.push('\n');
+    if !dense {
+        result.push('\n');
+    }
     result.push_str(&format!(
         "Table: {}.{}\n",
         quote_ident(&resolved.schema),
         quote_ident(&resolved.name)
     ));
-    result.push_str(&"─".repeat(64));
-    result.push('\n');
-    result.push('\n');
-    result.push_str(&table_info.format(verbose));
+    if !dense {
+        result.push_str(&"─".repeat(64));
+        result.push('\n');
+        result.push('\n');
+    }
+    result.push_str(&table_info.format(verbose, density));
 
     // Append dependents/dependencies section if requested
     if let Some(ref deps) = deps_data {
-        result.push('\n');
-        result.push('\n');
+        if dense {
+            result.push('\n');
+        } else {
+            result.push('\n');
+            result.push('\n');
+        }
         result.push_str("Direct Dependents:");
         result.push('\n');
-        result.push('\n');
-        result.push_str(&deps.format(&resolved.schema, &resolved.name));
+        if !dense {
+            result.push('\n');
+        }
+        result.push_str(&deps.format(&resolved.schema, &resolved.name, density));
     }
     if let Some(ref deps) = dependencies_data {
-        result.push('\n');
-        result.push('\n');
+        if dense {
+            result.push('\n');
+        } else {
+            result.push('\n');
+            result.push('\n');
+        }
         result.push_str("Direct Dependencies:");
         result.push('\n');
-        result.push('\n');
-        result.push_str(&deps.format(&resolved.schema, &resolved.name));
+        if !dense {
+            result.push('\n');
+        }
+        result.push_str(&deps.format(&resolved.schema, &resolved.name, density));
     }
 
     output.data(&result);

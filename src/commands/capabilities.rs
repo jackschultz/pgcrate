@@ -689,8 +689,49 @@ fn check_fix_terminate_capability(has_pg_terminate: bool, read_only: bool) -> Ca
     }
 }
 
-/// Print capabilities in human-readable format
-pub fn print_human(result: &CapabilitiesResult) {
+/// Print capabilities in human-readable format.
+///
+/// `Pretty` pads the capability id to a fixed column and uses glyph status
+/// markers. `Dense` drops the padding and glyphs (status as a word) — same
+/// per-capability id, status, and notes, fewer tokens.
+pub fn print_human(result: &CapabilitiesResult, density: crate::output::Density) {
+    if density.is_dense() {
+        print_dense(result);
+    } else {
+        print_pretty(result);
+    }
+}
+
+/// Plain status word, shared so both forms agree on the vocabulary.
+fn status_word(status: CapabilityStatus) -> &'static str {
+    match status {
+        CapabilityStatus::Available => "available",
+        CapabilityStatus::Degraded => "degraded",
+        CapabilityStatus::Unavailable => "unavailable",
+        CapabilityStatus::Unknown => "unknown",
+    }
+}
+
+fn print_dense(result: &CapabilitiesResult) {
+    println!("CAPABILITIES:");
+    for cap in &result.capabilities {
+        println!("{} {}", cap.id, status_word(cap.status));
+        for lim in &cap.limitations {
+            println!("  - {}", lim);
+        }
+        if cap.status != CapabilityStatus::Available {
+            for reason in &cap.reasons {
+                println!("  - {}", reason.message);
+            }
+        }
+    }
+    println!(
+        "SUMMARY: {} available, {} degraded, {} unavailable",
+        result.summary.available, result.summary.degraded, result.summary.unavailable
+    );
+}
+
+fn print_pretty(result: &CapabilitiesResult) {
     println!("CAPABILITIES:");
     println!();
 

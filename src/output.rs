@@ -14,25 +14,71 @@ pub enum OutputMode {
     Json,
 }
 
+/// Readable-output density for human (non-JSON) mode.
+///
+/// `Pretty` is the decorated form a person reads at a terminal — box rules,
+/// columns padded to width, emoji status glyphs. `Dense` carries the *same
+/// information* with the decoration stripped: no rules, no padding, no glyphs.
+/// It exists because agents pay per token for the output they capture, and a
+/// padded table is mostly whitespace.
+///
+/// Mode is chosen once in `main` from `stdout.is_terminal()` (TTY → Pretty,
+/// piped → Dense) with `--pretty`/`--dense` overriding detection. JSON mode
+/// ignores density entirely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Density {
+    Pretty,
+    Dense,
+}
+
+impl Density {
+    /// Resolve density from TTY detection plus mutually-exclusive overrides.
+    /// `pretty`/`dense` come from the global CLI flags; clap guarantees they
+    /// are not both set. With neither, a terminal gets `Pretty` and anything
+    /// piped/captured gets `Dense`.
+    pub fn resolve(pretty: bool, dense: bool, stdout_is_terminal: bool) -> Self {
+        if pretty {
+            Density::Pretty
+        } else if dense {
+            Density::Dense
+        } else if stdout_is_terminal {
+            Density::Pretty
+        } else {
+            Density::Dense
+        }
+    }
+
+    pub fn is_dense(self) -> bool {
+        self == Density::Dense
+    }
+}
+
 /// Output helper that centralizes all CLI output
 #[derive(Debug, Clone)]
 pub struct Output {
     pub mode: OutputMode,
+    pub density: Density,
     pub quiet: bool,
     pub verbose: bool,
 }
 
 impl Output {
-    pub fn new(json: bool, quiet: bool, verbose: bool) -> Self {
+    pub fn new(json: bool, density: Density, quiet: bool, verbose: bool) -> Self {
         Self {
             mode: if json {
                 OutputMode::Json
             } else {
                 OutputMode::Human
             },
+            density,
             quiet,
             verbose,
         }
+    }
+
+    /// Readable-output density (Pretty vs Dense). Meaningless in JSON mode.
+    pub fn density(&self) -> Density {
+        self.density
     }
 
     /// Write data to stdout (the command's "answer")
@@ -531,21 +577,36 @@ mod tests {
 
     #[test]
     fn test_output_mode_json() {
-        let output = Output::new(true, false, false);
+        let output = Output::new(true, Density::Dense, false, false);
         assert!(output.is_json());
         assert_eq!(output.mode, OutputMode::Json);
     }
 
     #[test]
     fn test_output_mode_human() {
-        let output = Output::new(false, false, false);
+        let output = Output::new(false, Density::Pretty, false, false);
         assert!(!output.is_json());
         assert_eq!(output.mode, OutputMode::Human);
     }
 
     #[test]
     fn test_output_quiet() {
-        let output = Output::new(false, true, false);
+        let output = Output::new(false, Density::Dense, true, false);
         assert!(output.is_quiet());
+    }
+
+    #[test]
+    fn test_density_resolve_detection() {
+        // No overrides: TTY → Pretty, piped → Dense.
+        assert_eq!(Density::resolve(false, false, true), Density::Pretty);
+        assert_eq!(Density::resolve(false, false, false), Density::Dense);
+    }
+
+    #[test]
+    fn test_density_resolve_overrides_beat_detection() {
+        // --pretty forces Pretty even when piped.
+        assert_eq!(Density::resolve(true, false, false), Density::Pretty);
+        // --dense forces Dense even on a terminal.
+        assert_eq!(Density::resolve(false, true, true), Density::Dense);
     }
 }

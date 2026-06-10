@@ -687,18 +687,43 @@ async fn check_stats_age(client: &Client) -> CheckOutcome {
     }
 }
 
-/// Print triage results in human-readable format
-pub fn print_human(results: &TriageResults, quiet: bool) {
+/// Plain status word for a check, shared across pretty and dense forms.
+fn status_word(status: CheckStatus) -> &'static str {
+    match status {
+        CheckStatus::Healthy => "healthy",
+        CheckStatus::Warning => "WARNING",
+        CheckStatus::Critical => "CRITICAL",
+    }
+}
+
+/// Print triage results in human-readable format.
+///
+/// `Pretty` aligns labels and summaries into fixed-width columns and prefixes
+/// each row with a status emoji. `Dense` drops the column padding and the
+/// emoji (the status word carries the same signal) — this is the largest
+/// per-token win, since the pretty table is mostly padding whitespace.
+pub fn print_human(results: &TriageResults, quiet: bool, density: crate::output::Density) {
     if quiet {
-        // In quiet mode, only show non-healthy checks and skipped
+        // In quiet mode, only show non-healthy checks and skipped. Quiet output
+        // is already minimal; dense just drops the leading emoji.
+        let dense = density.is_dense();
         for check in &results.checks {
             if check.status != CheckStatus::Healthy {
-                println!(
-                    "{} {}: {}",
-                    check.status.emoji(),
-                    check.label,
-                    check.summary
-                );
+                if dense {
+                    println!(
+                        "{} {}: {}",
+                        status_word(check.status),
+                        check.label,
+                        check.summary
+                    );
+                } else {
+                    println!(
+                        "{} {}: {}",
+                        check.status.emoji(),
+                        check.label,
+                        check.summary
+                    );
+                }
                 for action in &check.next_actions {
                     println!("  → {}", action.to_command_string());
                 }
@@ -714,6 +739,54 @@ pub fn print_human(results: &TriageResults, quiet: bool) {
         return;
     }
 
+    if density.is_dense() {
+        print_dense(results);
+    } else {
+        print_pretty(results);
+    }
+}
+
+fn print_dense(results: &TriageResults) {
+    // One check per line: "LABEL: summary — status". No column padding, no
+    // emoji. Severity ordering is preserved from `results.checks`.
+    for check in &results.checks {
+        println!(
+            "{}: {} — {}",
+            check.label,
+            check.summary,
+            status_word(check.status)
+        );
+    }
+
+    if !results.skipped_checks.is_empty() {
+        println!("SKIPPED:");
+        for skip in &results.skipped_checks {
+            println!("  {} - {}", skip.check_id, skip.reason_code.description());
+        }
+    }
+
+    let actionable: Vec<_> = results
+        .checks
+        .iter()
+        .filter(|c| !c.next_actions.is_empty() && c.status != CheckStatus::Healthy)
+        .collect();
+
+    if !actionable.is_empty() {
+        println!("NEXT ACTIONS:");
+        for check in actionable {
+            for action in &check.next_actions {
+                println!(
+                    "  {} → {} ({})",
+                    check.label,
+                    action.to_command_string(),
+                    action.rationale
+                );
+            }
+        }
+    }
+}
+
+fn print_pretty(results: &TriageResults) {
     // Find longest label for alignment
     let max_label = results
         .checks
@@ -724,11 +797,7 @@ pub fn print_human(results: &TriageResults, quiet: bool) {
 
     // Print checks (already sorted by severity)
     for check in &results.checks {
-        let status_str = match check.status {
-            CheckStatus::Healthy => format!("{}  healthy", check.status.emoji()),
-            CheckStatus::Warning => format!("{}  WARNING", check.status.emoji()),
-            CheckStatus::Critical => format!("{}  CRITICAL", check.status.emoji()),
-        };
+        let status_str = format!("{}  {}", check.status.emoji(), status_word(check.status));
 
         println!(
             "{:width$}  {:40} {}",
