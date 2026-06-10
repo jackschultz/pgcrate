@@ -82,6 +82,8 @@ pub async fn run_capabilities(client: &Client, read_only: bool) -> Result<Capabi
     let has_pg_terminate = check_function_privilege(client, "pg_terminate_backend(int)").await;
     let has_pg_stat_statements = check_extension_and_privilege(client, "pg_stat_statements").await;
     let has_pg_stat_replication = check_privilege(client, "pg_stat_replication", "SELECT").await;
+    let has_pg_stat_archiver = check_privilege(client, "pg_stat_archiver", "SELECT").await;
+    let has_pg_ls_waldir = check_function_access(client, "pg_ls_waldir()").await;
 
     let capabilities = vec![
         // diagnostics.triage - always available (uses minimal queries)
@@ -111,6 +113,8 @@ pub async fn run_capabilities(client: &Client, read_only: bool) -> Result<Capabi
         check_bloat_capability(has_pg_stat_user_tables),
         // diagnostics.replication - needs pg_stat_replication
         check_replication_capability(has_pg_stat_replication),
+        // diagnostics.wal - needs pg_stat_archiver, optionally pg_ls_waldir
+        check_wal_capability(has_pg_stat_archiver, has_pg_ls_waldir),
         // diagnostics.context - always available
         CapabilityInfo {
             id: "diagnostics.context",
@@ -189,6 +193,17 @@ async fn check_extension_and_privilege(client: &Client, extension: &str) -> bool
         .await
         .map(|r| r.get::<_, bool>(0))
         .unwrap_or(false)
+}
+
+async fn check_function_access(client: &Client, function: &str) -> bool {
+    // Try to actually call the function - some functions require specific roles
+    // (e.g., pg_ls_waldir requires pg_monitor or superuser). LIMIT 0 still
+    // triggers the permission check at execution without materializing rows;
+    // query() (not query_one) is required since the result is zero rows.
+    client
+        .query(&format!("SELECT 1 FROM {} LIMIT 0", function), &[])
+        .await
+        .is_ok()
 }
 
 fn check_locks_capability(
@@ -378,6 +393,50 @@ fn check_replication_capability(has_pg_stat_replication: bool) -> CapabilityInfo
         } else {
             vec![]
         },
+    }
+}
+
+fn check_wal_capability(has_pg_stat_archiver: bool, has_pg_ls_waldir: bool) -> CapabilityInfo {
+    let requirements = vec![
+        Requirement {
+            what: "pg_stat_archiver SELECT".to_string(),
+            met: has_pg_stat_archiver,
+        },
+        Requirement {
+            what: "pg_ls_waldir() access (pg_monitor role)".to_string(),
+            met: has_pg_ls_waldir,
+        },
+    ];
+
+    let mut reasons = vec![];
+    let mut limitations = vec![];
+
+    let status = if !has_pg_stat_archiver {
+        reasons.push(ReasonInfo::new(
+            ReasonCode::MissingPrivilege,
+            "Cannot read pg_stat_archiver",
+        ));
+        CapabilityStatus::Unavailable
+    } else if !has_pg_ls_waldir {
+        reasons.push(ReasonInfo::new(
+            ReasonCode::MissingPrivilege,
+            "Cannot access pg_ls_waldir (requires pg_monitor or superuser)",
+        ));
+        limitations.push("WAL directory size and segment count unavailable".to_string());
+        limitations.push("Archive pending file count unavailable".to_string());
+        CapabilityStatus::Degraded
+    } else {
+        CapabilityStatus::Available
+    };
+
+    CapabilityInfo {
+        id: "diagnostics.wal",
+        name: "WAL",
+        description: "WAL generation, archiving, and disk consumption",
+        status,
+        reasons,
+        requirements,
+        limitations,
     }
 }
 

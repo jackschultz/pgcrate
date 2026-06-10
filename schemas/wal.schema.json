@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pgcrate.diagnostics.wal",
+  "title": "pgcrate wal output",
+  "description": "WAL generation, archiving, and disk consumption analysis",
+  "allOf": [
+    { "$ref": "envelope.schema.json" }
+  ],
+  "properties": {
+    "schema_id": { "const": "pgcrate.diagnostics.wal" },
+    "data": { "$ref": "#/$defs/walData" }
+  },
+  "$defs": {
+    "walData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["wal_level", "current_wal_lsn", "wal_segment_size_bytes", "wal_directory", "archiving", "generation_rate", "issues", "overall_status"],
+      "properties": {
+        "wal_level": { "type": "string" },
+        "current_wal_lsn": { "type": "string" },
+        "wal_segment_size_bytes": { "type": "integer" },
+        "wal_directory": { "$ref": "#/$defs/walDirectory" },
+        "archiving": { "$ref": "#/$defs/archiveStatus" },
+        "generation_rate": { "$ref": "#/$defs/generationRate" },
+        "issues": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/walIssue" }
+        },
+        "overall_status": { "$ref": "#/$defs/walStatus" }
+      }
+    },
+    "walStatus": {
+      "type": "string",
+      "enum": ["healthy", "warning", "critical"]
+    },
+    "walDirectory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "size_bytes": { "type": ["integer", "null"] },
+        "segment_count": { "type": ["integer", "null"] }
+      }
+    },
+    "archiveStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "archive_mode", "failed_count"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "archive_mode": { "type": "string" },
+        "archive_command": { "type": ["string", "null"] },
+        "last_archived_wal": { "type": ["string", "null"] },
+        "last_archived_time": { "type": ["string", "null"] },
+        "failed_count": { "type": "integer" },
+        "last_failed_wal": { "type": ["string", "null"] },
+        "last_failed_time": { "type": ["string", "null"] },
+        "pending_count": { "type": ["integer", "null"] }
+      }
+    },
+    "generationRate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["measurement_note"],
+      "properties": {
+        "bytes_per_second": { "type": ["number", "null"] },
+        "measurement_note": { "type": "string" }
+      }
+    },
+    "walIssue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "severity"],
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "severity": { "$ref": "#/$defs/walStatus" }
+      }
+    }
+  }
+}
