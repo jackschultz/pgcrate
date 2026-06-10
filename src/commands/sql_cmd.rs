@@ -36,6 +36,8 @@ pub struct SqlOptions {
     pub timeouts: TimeoutConfig,
     pub quiet: bool,
     pub json: bool,
+    /// Readable-output density for result tables (ignored in JSON/quiet mode).
+    pub density: crate::output::Density,
 }
 
 #[derive(Serialize)]
@@ -219,7 +221,7 @@ async fn run_read(client: &Client, sql: &str, opts: &SqlOptions) -> Result<()> {
     if opts.quiet {
         return Ok(());
     }
-    print_results(&results);
+    print_results(&results, opts.density);
     Ok(())
 }
 
@@ -420,7 +422,7 @@ fn finish_write(
     }
 
     // Print any sample rows first, then the summary banner.
-    print_results(&results);
+    print_results(&results, opts.density);
 
     if committed {
         println!("\nCOMMITTED — {rows_affected} row(s) affected.");
@@ -499,7 +501,7 @@ fn emit_json(opts: &SqlOptions, write: Option<WriteOutcome>, results: Vec<SqlRes
     let _ = opts;
 }
 
-fn print_results(results: &[SqlResult]) {
+fn print_results(results: &[SqlResult], density: crate::output::Density) {
     for result in results {
         match result {
             SqlResult::Query {
@@ -507,14 +509,14 @@ fn print_results(results: &[SqlResult]) {
                 rows,
                 truncated,
             } => {
-                print_table(columns, rows);
+                print_table(columns, rows, density);
                 if *truncated > 0 {
                     println!("… +{truncated} more row(s) — use --limit N (or --limit 0 to uncap)");
                 }
             }
             SqlResult::Sample { columns, rows } => {
                 println!("Sample of affected rows:");
-                print_table(columns, rows);
+                print_table(columns, rows, density);
             }
             SqlResult::CommandComplete { rows } => {
                 println!("OK ({rows} rows)");
@@ -656,8 +658,24 @@ fn classify(sql: &str) -> Result<ParsedSql> {
     })
 }
 
-fn print_table(columns: &[String], rows: &[Vec<Option<String>>]) {
+fn print_table(columns: &[String], rows: &[Vec<Option<String>>], density: crate::output::Density) {
     if columns.is_empty() {
+        return;
+    }
+
+    if density.is_dense() {
+        // Dense: header row plus unpadded ` | `-joined cells, no width padding
+        // and no separator rule. Columns are still labelled and aligned by the
+        // pipe delimiter, so the result stays unambiguous.
+        println!("{}", columns.join(" | "));
+        for row in rows {
+            let line: Vec<&str> = columns
+                .iter()
+                .enumerate()
+                .map(|(i, _)| row.get(i).and_then(|v| v.as_deref()).unwrap_or("NULL"))
+                .collect();
+            println!("{}", line.join(" | "));
+        }
         return;
     }
 

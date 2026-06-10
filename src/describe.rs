@@ -1040,69 +1040,100 @@ async fn get_column_types(client: &Client, schema: &str, table: &str) -> Result<
 }
 
 impl Dependents {
-    /// Format dependents output for display
-    pub fn format(&self, schema: &str, table: &str) -> String {
+    /// Format dependents output for display.
+    ///
+    /// `Dense` drops blank-line separators between the FK/Views/Triggers
+    /// subsections and omits any subsection that has no entries; `Pretty` keeps
+    /// every labelled subsection (with `(none)`) and the blank-line spacing.
+    pub fn format(&self, schema: &str, table: &str, density: crate::output::Density) -> String {
+        let dense = density.is_dense();
         let mut output = Vec::new();
         let mut count = 0;
+        let mut first = true;
+        let mut sep = |out: &mut Vec<String>, present: bool| {
+            // In dense mode a subsection is only emitted when present, so we add
+            // no blank line; in pretty mode every subsection (after the first)
+            // is preceded by a blank line.
+            if !dense && !first {
+                out.push(String::new());
+            }
+            if present || !dense {
+                first = false;
+            }
+        };
 
         // Foreign Keys section
-        output.push("  Foreign Keys (tables referencing this table):".to_string());
-        if self.foreign_keys.is_empty() {
-            output.push("    (none)".to_string());
-        } else {
-            for fk in &self.foreign_keys {
-                let from_cols = if fk.from_columns.len() == 1 {
-                    fk.from_columns[0].clone()
-                } else {
-                    format!("({})", fk.from_columns.join(", "))
-                };
-                let to_cols = if fk.to_columns.len() == 1 {
-                    fk.to_columns[0].clone()
-                } else {
-                    format!("({})", fk.to_columns.join(", "))
-                };
-                output.push(format!(
-                    "    {}.{}.{} \u{2192} {}.{}.{}",
-                    fk.from_schema, fk.from_table, from_cols, fk.to_schema, fk.to_table, to_cols
-                ));
-                count += 1;
+        if !dense || !self.foreign_keys.is_empty() {
+            sep(&mut output, !self.foreign_keys.is_empty());
+            output.push("  Foreign Keys (tables referencing this table):".to_string());
+            if self.foreign_keys.is_empty() {
+                output.push("    (none)".to_string());
+            } else {
+                for fk in &self.foreign_keys {
+                    let from_cols = if fk.from_columns.len() == 1 {
+                        fk.from_columns[0].clone()
+                    } else {
+                        format!("({})", fk.from_columns.join(", "))
+                    };
+                    let to_cols = if fk.to_columns.len() == 1 {
+                        fk.to_columns[0].clone()
+                    } else {
+                        format!("({})", fk.to_columns.join(", "))
+                    };
+                    output.push(format!(
+                        "    {}.{}.{} \u{2192} {}.{}.{}",
+                        fk.from_schema,
+                        fk.from_table,
+                        from_cols,
+                        fk.to_schema,
+                        fk.to_table,
+                        to_cols
+                    ));
+                    count += 1;
+                }
             }
         }
 
         // Views section
-        output.push(String::new());
-        output.push("  Views:".to_string());
-        if self.views.is_empty() {
-            output.push("    (none)".to_string());
-        } else {
-            for view in &self.views {
-                let suffix = if view.is_materialized {
-                    " (materialized)"
-                } else {
-                    ""
-                };
-                output.push(format!("    {}.{}{}", view.schema, view.name, suffix));
-                count += 1;
+        if !dense || !self.views.is_empty() {
+            sep(&mut output, !self.views.is_empty());
+            output.push("  Views:".to_string());
+            if self.views.is_empty() {
+                output.push("    (none)".to_string());
+            } else {
+                for view in &self.views {
+                    let suffix = if view.is_materialized {
+                        " (materialized)"
+                    } else {
+                        ""
+                    };
+                    output.push(format!("    {}.{}{}", view.schema, view.name, suffix));
+                    count += 1;
+                }
             }
         }
 
         // Triggers section
-        output.push(String::new());
-        output.push("  Triggers:".to_string());
-        if self.triggers.is_empty() {
-            output.push("    (none)".to_string());
-        } else {
-            for trg in &self.triggers {
-                output.push(format!(
-                    "    {} (on {}.{})",
-                    trg.trigger_name, trg.schema, trg.table_name
-                ));
-                count += 1;
+        if !dense || !self.triggers.is_empty() {
+            sep(&mut output, !self.triggers.is_empty());
+            output.push("  Triggers:".to_string());
+            if self.triggers.is_empty() {
+                output.push("    (none)".to_string());
+            } else {
+                for trg in &self.triggers {
+                    output.push(format!(
+                        "    {} (on {}.{})",
+                        trg.trigger_name, trg.schema, trg.table_name
+                    ));
+                    count += 1;
+                }
             }
         }
 
         // Summary
-        output.push(String::new());
+        if !dense {
+            output.push(String::new());
+        }
         output.push(format!("{} objects depend on {}.{}", count, schema, table));
 
         output.join("\n")
@@ -1110,64 +1141,89 @@ impl Dependents {
 }
 
 impl Dependencies {
-    /// Format dependencies output for display
-    pub fn format(&self, schema: &str, table: &str) -> String {
+    /// Format dependencies output for display. Density behaves as in
+    /// [`Dependents::format`].
+    pub fn format(&self, schema: &str, table: &str, density: crate::output::Density) -> String {
+        let dense = density.is_dense();
         let mut output = Vec::new();
         let mut count = 0;
+        let mut first = true;
+        let mut sep = |out: &mut Vec<String>, present: bool| {
+            if !dense && !first {
+                out.push(String::new());
+            }
+            if present || !dense {
+                first = false;
+            }
+        };
 
         // Foreign Keys section (this table references)
-        output.push("  Foreign Keys (this table references):".to_string());
-        if self.foreign_keys.is_empty() {
-            output.push("    (none)".to_string());
-        } else {
-            for fk in &self.foreign_keys {
-                let from_cols = if fk.from_columns.len() == 1 {
-                    fk.from_columns[0].clone()
-                } else {
-                    format!("({})", fk.from_columns.join(", "))
-                };
-                let to_cols = if fk.to_columns.len() == 1 {
-                    fk.to_columns[0].clone()
-                } else {
-                    format!("({})", fk.to_columns.join(", "))
-                };
-                output.push(format!(
-                    "    {}.{}.{} \u{2192} {}.{}.{}",
-                    fk.from_schema, fk.from_table, from_cols, fk.to_schema, fk.to_table, to_cols
-                ));
-                count += 1;
+        if !dense || !self.foreign_keys.is_empty() {
+            sep(&mut output, !self.foreign_keys.is_empty());
+            output.push("  Foreign Keys (this table references):".to_string());
+            if self.foreign_keys.is_empty() {
+                output.push("    (none)".to_string());
+            } else {
+                for fk in &self.foreign_keys {
+                    let from_cols = if fk.from_columns.len() == 1 {
+                        fk.from_columns[0].clone()
+                    } else {
+                        format!("({})", fk.from_columns.join(", "))
+                    };
+                    let to_cols = if fk.to_columns.len() == 1 {
+                        fk.to_columns[0].clone()
+                    } else {
+                        format!("({})", fk.to_columns.join(", "))
+                    };
+                    output.push(format!(
+                        "    {}.{}.{} \u{2192} {}.{}.{}",
+                        fk.from_schema,
+                        fk.from_table,
+                        from_cols,
+                        fk.to_schema,
+                        fk.to_table,
+                        to_cols
+                    ));
+                    count += 1;
+                }
             }
         }
 
         // Trigger Functions section
-        output.push(String::new());
-        output.push("  Triggers (functions called):".to_string());
-        if self.trigger_functions.is_empty() {
-            output.push("    (none)".to_string());
-        } else {
-            for tf in &self.trigger_functions {
-                output.push(format!(
-                    "    {}.{}() via {} trigger",
-                    tf.function_schema, tf.function_name, tf.trigger_name
-                ));
-                count += 1;
+        if !dense || !self.trigger_functions.is_empty() {
+            sep(&mut output, !self.trigger_functions.is_empty());
+            output.push("  Triggers (functions called):".to_string());
+            if self.trigger_functions.is_empty() {
+                output.push("    (none)".to_string());
+            } else {
+                for tf in &self.trigger_functions {
+                    output.push(format!(
+                        "    {}.{}() via {} trigger",
+                        tf.function_schema, tf.function_name, tf.trigger_name
+                    ));
+                    count += 1;
+                }
             }
         }
 
         // Types section
-        output.push(String::new());
-        output.push("  Types:".to_string());
-        if self.types.is_empty() {
-            output.push("    (none)".to_string());
-        } else {
-            for t in &self.types {
-                output.push(format!("    {}.{} ({})", t.schema, t.name, t.kind));
-                count += 1;
+        if !dense || !self.types.is_empty() {
+            sep(&mut output, !self.types.is_empty());
+            output.push("  Types:".to_string());
+            if self.types.is_empty() {
+                output.push("    (none)".to_string());
+            } else {
+                for t in &self.types {
+                    output.push(format!("    {}.{} ({})", t.schema, t.name, t.kind));
+                    count += 1;
+                }
             }
         }
 
         // Summary
-        output.push(String::new());
+        if !dense {
+            output.push(String::new());
+        }
         output.push(format!(
             "{} objects that {}.{} depends on",
             count, schema, table
@@ -1182,18 +1238,37 @@ impl Dependencies {
 // ============================================================================
 
 impl TableDescribe {
-    /// Format the describe output for display
-    /// If verbose is true, includes additional details and auto-vacuum/auto-analyze timestamps
-    pub fn format(&self, verbose: bool) -> String {
+    /// Format the describe output for display.
+    ///
+    /// `verbose` includes details and auto-vacuum/auto-analyze timestamps.
+    /// `density` selects the layout: `Pretty` pads columns/constraints to width
+    /// and separates sections with blank lines; `Dense` single-spaces fields,
+    /// drops the blank-line separators, and omits empty `(none)` sections — the
+    /// section labels stay identical so the output is still self-describing.
+    pub fn format(&self, verbose: bool, density: crate::output::Density) -> String {
+        let dense = density.is_dense();
         let mut output = Vec::new();
+
+        // Blank line between sections only in pretty mode.
+        let sep = |out: &mut Vec<String>| {
+            if !dense {
+                out.push(String::new());
+            }
+        };
 
         // Details section (verbose only, at the top)
         if let Some(ref details) = self.details {
             output.push("Details:".to_string());
-            output.push(format!("  Owner:        {}", details.owner));
-            output.push(format!("  Type:         {}", details.table_kind));
-            output.push(format!("  Persistence:  {}", details.persistence));
-            output.push(String::new());
+            if dense {
+                output.push(format!("  Owner: {}", details.owner));
+                output.push(format!("  Type: {}", details.table_kind));
+                output.push(format!("  Persistence: {}", details.persistence));
+            } else {
+                output.push(format!("  Owner:        {}", details.owner));
+                output.push(format!("  Type:         {}", details.table_kind));
+                output.push(format!("  Persistence:  {}", details.persistence));
+            }
+            sep(&mut output);
         }
 
         // Columns section
@@ -1201,14 +1276,20 @@ impl TableDescribe {
         if self.columns.is_empty() {
             output.push("  (none)".to_string());
         } else {
-            // Calculate column widths for alignment
-            let max_name = self.columns.iter().map(|c| c.name.len()).max().unwrap_or(0);
-            let max_type = self
-                .columns
-                .iter()
-                .map(|c| c.data_type.len())
-                .max()
-                .unwrap_or(0);
+            // Pretty pads name/type to the widest value; dense uses a single
+            // space so cells aren't surrounded by alignment whitespace.
+            let (max_name, max_type) = if dense {
+                (0, 0)
+            } else {
+                let n = self.columns.iter().map(|c| c.name.len()).max().unwrap_or(0);
+                let t = self
+                    .columns
+                    .iter()
+                    .map(|c| c.data_type.len())
+                    .max()
+                    .unwrap_or(0);
+                (n, t)
+            };
 
             for col in &self.columns {
                 let mut parts = Vec::new();
@@ -1248,106 +1329,142 @@ impl TableDescribe {
                     parts.push(format!("DEFAULT {}", default));
                 }
 
-                let suffix = if parts.is_empty() {
-                    String::new()
+                if dense {
+                    // "  name type qualifiers…" — single spaces throughout.
+                    let mut line = format!("  {} {}", col.name, col.data_type);
+                    if !parts.is_empty() {
+                        line.push(' ');
+                        line.push_str(&parts.join(" "));
+                    }
+                    output.push(line);
                 } else {
-                    format!("  {}", parts.join("  "))
-                };
-
-                output.push(format!(
-                    "  {:name_width$}  {:type_width$}{}",
-                    col.name,
-                    col.data_type,
-                    suffix,
-                    name_width = max_name,
-                    type_width = max_type
-                ));
+                    let suffix = if parts.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  {}", parts.join("  "))
+                    };
+                    output.push(format!(
+                        "  {:name_width$}  {:type_width$}{}",
+                        col.name,
+                        col.data_type,
+                        suffix,
+                        name_width = max_name,
+                        type_width = max_type
+                    ));
+                }
             }
         }
 
-        // Indexes section
-        output.push(String::new());
-        output.push("Indexes:".to_string());
-        if self.indexes.is_empty() {
-            output.push("  (none)".to_string());
-        } else {
-            // Display canonical definitions from pg_get_indexdef() directly.
-            // This avoids misleading parsed summaries for complex indexes
-            // (expression, partial, INCLUDE, etc.)
-            for idx in &self.indexes {
-                output.push(format!("  {}", idx.definition));
+        // Indexes section. Dense omits the section entirely when empty.
+        if !dense || !self.indexes.is_empty() {
+            sep(&mut output);
+            output.push("Indexes:".to_string());
+            if self.indexes.is_empty() {
+                output.push("  (none)".to_string());
+            } else {
+                // Display canonical definitions from pg_get_indexdef() directly.
+                // This avoids misleading parsed summaries for complex indexes
+                // (expression, partial, INCLUDE, etc.)
+                for idx in &self.indexes {
+                    output.push(format!("  {}", idx.definition));
+                }
             }
         }
 
         // Constraints section
-        output.push(String::new());
-        output.push("Constraints:".to_string());
-        if self.constraints.is_empty() {
-            output.push("  (none)".to_string());
-        } else {
-            let max_name = self
-                .constraints
-                .iter()
-                .map(|c| c.name.len())
-                .max()
-                .unwrap_or(0);
-            for con in &self.constraints {
-                output.push(format!(
-                    "  {:width$}  {}",
-                    con.name,
-                    con.definition,
-                    width = max_name
-                ));
+        if !dense || !self.constraints.is_empty() {
+            sep(&mut output);
+            output.push("Constraints:".to_string());
+            if self.constraints.is_empty() {
+                output.push("  (none)".to_string());
+            } else {
+                let max_name = if dense {
+                    0
+                } else {
+                    self.constraints
+                        .iter()
+                        .map(|c| c.name.len())
+                        .max()
+                        .unwrap_or(0)
+                };
+                for con in &self.constraints {
+                    if dense {
+                        output.push(format!("  {} {}", con.name, con.definition));
+                    } else {
+                        output.push(format!(
+                            "  {:width$}  {}",
+                            con.name,
+                            con.definition,
+                            width = max_name
+                        ));
+                    }
+                }
             }
         }
 
         // Triggers section
-        output.push(String::new());
-        output.push("Triggers:".to_string());
-        if self.triggers.is_empty() {
-            output.push("  (none)".to_string());
-        } else {
-            // Display canonical definitions from pg_get_triggerdef() directly.
-            // This avoids misleading parsed summaries and ensures correctness
-            // for all trigger patterns.
-            for trg in &self.triggers {
-                output.push(format!("  {}", trg.definition));
+        if !dense || !self.triggers.is_empty() {
+            sep(&mut output);
+            output.push("Triggers:".to_string());
+            if self.triggers.is_empty() {
+                output.push("  (none)".to_string());
+            } else {
+                // Display canonical definitions from pg_get_triggerdef() directly.
+                // This avoids misleading parsed summaries and ensures correctness
+                // for all trigger patterns.
+                for trg in &self.triggers {
+                    output.push(format!("  {}", trg.definition));
+                }
             }
         }
 
         // Stats section
         if let Some(ref stats) = self.stats {
-            output.push(String::new());
+            sep(&mut output);
             output.push("Stats:".to_string());
 
             // Check if stats retrieval failed (e.g., permission denied)
             if let Some(ref reason) = stats.unavailable_reason {
                 output.push(format!("  {}", reason));
             } else {
-                output.push(format!("  Rows (estimate):  ~{}", stats.row_estimate));
-                output.push(format!("  Table size:       {}", stats.table_size));
-                output.push(format!("  Index size:       {}", stats.index_size));
-                output.push(format!("  Total size:       {}", stats.total_size));
+                // Labels differ only in trailing alignment padding: pretty pads
+                // them into a column, dense uses a single space. Every line
+                // (sizes, timestamps, partition caveat) is present in both forms
+                // — density never drops information.
+                let label = |name: &str| {
+                    if dense {
+                        format!("  {}", name)
+                    } else {
+                        format!("  {:width$}", name, width = 18)
+                    }
+                };
+                output.push(format!(
+                    "{}~{}",
+                    label("Rows (estimate):"),
+                    stats.row_estimate
+                ));
+                output.push(format!("{}{}", label("Table size:"), stats.table_size));
+                output.push(format!("{}{}", label("Index size:"), stats.index_size));
+                output.push(format!("{}{}", label("Total size:"), stats.total_size));
 
                 if let Some(ref ts) = stats.last_vacuum {
-                    output.push(format!("  Last vacuum:      {}", ts));
+                    output.push(format!("{}{}", label("Last vacuum:"), ts));
                 }
                 if verbose {
                     if let Some(ref ts) = stats.last_autovacuum {
-                        output.push(format!("  Last autovacuum:  {}", ts));
+                        output.push(format!("{}{}", label("Last autovacuum:"), ts));
                     }
                 }
-
                 if let Some(ref ts) = stats.last_analyze {
-                    output.push(format!("  Last analyze:     {}", ts));
+                    output.push(format!("{}{}", label("Last analyze:"), ts));
                 }
                 if verbose {
                     if let Some(ref ts) = stats.last_autoanalyze {
-                        output.push(format!("  Last autoanalyze: {}", ts));
+                        output.push(format!("{}{}", label("Last autoanalyze:"), ts));
                     }
                 }
 
-                // Add caveat for partitioned tables
+                // Add caveat for partitioned tables (both forms)
                 if stats.is_partitioned {
                     output.push(
                         "  (sizes are for parent table only; partitions not included)".to_string(),
@@ -1359,7 +1476,7 @@ impl TableDescribe {
         // RLS section (only if enabled)
         if let Some(ref rls) = self.rls {
             if rls.enabled {
-                output.push(String::new());
+                sep(&mut output);
                 let status = if rls.forced {
                     "Row-Level Security: ENABLED (forced)"
                 } else {
@@ -1543,7 +1660,7 @@ mod tests {
             views: vec![],
             triggers: vec![],
         };
-        let output = deps.format("public", "users");
+        let output = deps.format("public", "users", crate::output::Density::Pretty);
         assert!(output.contains("(none)"));
         assert!(output.contains("0 objects depend on public.users"));
     }
@@ -1563,7 +1680,7 @@ mod tests {
             views: vec![],
             triggers: vec![],
         };
-        let output = deps.format("public", "users");
+        let output = deps.format("public", "users", crate::output::Density::Pretty);
         assert!(output.contains("public.orders.user_id"));
         assert!(output.contains("→"));
         assert!(output.contains("1 objects depend on public.users"));
@@ -1584,7 +1701,7 @@ mod tests {
             views: vec![],
             triggers: vec![],
         };
-        let output = deps.format("app", "parent");
+        let output = deps.format("app", "parent", crate::output::Density::Pretty);
         // Composite FK should show grouped columns
         assert!(output.contains("(a, b)"));
         assert!(output.contains("(x, y)"));
@@ -1597,7 +1714,7 @@ mod tests {
             trigger_functions: vec![],
             types: vec![],
         };
-        let output = deps.format("public", "users");
+        let output = deps.format("public", "users", crate::output::Density::Pretty);
         assert!(output.contains("(none)"));
         assert!(output.contains("0 objects that public.users depends on"));
     }
@@ -1613,7 +1730,7 @@ mod tests {
                 kind: "enum".to_string(),
             }],
         };
-        let output = deps.format("public", "tasks");
+        let output = deps.format("public", "tasks", crate::output::Density::Pretty);
         assert!(output.contains("public.status (enum)"));
         assert!(output.contains("1 objects that public.tasks depends on"));
     }
@@ -1629,7 +1746,7 @@ mod tests {
             }],
             types: vec![],
         };
-        let output = deps.format("public", "users");
+        let output = deps.format("public", "users", crate::output::Density::Pretty);
         assert!(output.contains("public.set_updated_at()"));
         assert!(output.contains("via update_timestamp trigger"));
     }
@@ -1673,7 +1790,7 @@ mod tests {
             rls: None,
         };
 
-        let output = table.format(false);
+        let output = table.format(false, crate::output::Density::Pretty);
         assert!(
             output.contains("Constraints:"),
             "Should have Constraints section"
@@ -1714,7 +1831,7 @@ mod tests {
             rls: None,
         };
 
-        let output = table.format(false);
+        let output = table.format(false, crate::output::Density::Pretty);
         assert!(
             output.contains("Constraints:"),
             "Should have Constraints section"
@@ -1779,7 +1896,7 @@ mod tests {
             rls: None,
         };
 
-        let output = table.format(false);
+        let output = table.format(false, crate::output::Density::Pretty);
         // Both constraints should be displayed distinctly
         assert!(
             output.contains("PRIMARY KEY (id)"),
@@ -1797,5 +1914,105 @@ mod tests {
             output.contains("users_email_key"),
             "Should show UNIQUE constraint name"
         );
+    }
+
+    /// A small table whose only populated section is Columns. Pretty shows the
+    /// empty Indexes/Constraints/Triggers sections; dense omits them.
+    fn columns_only_table() -> TableDescribe {
+        TableDescribe {
+            schema: "public".to_string(),
+            name: "t".to_string(),
+            columns: vec![ColumnInfo {
+                name: "id".to_string(),
+                data_type: "integer".to_string(),
+                nullable: false,
+                is_primary_key: true,
+                identity: None,
+                is_serial: true,
+                default: None,
+                fk_reference: None,
+            }],
+            indexes: vec![],
+            constraints: vec![],
+            triggers: vec![],
+            stats: None,
+            details: None,
+            rls: None,
+        }
+    }
+
+    #[test]
+    fn dense_drops_decoration_keeps_data() {
+        use crate::output::Density;
+        let table = columns_only_table();
+        let dense = table.format(false, Density::Dense);
+
+        // Section label and the column data survive.
+        assert!(dense.contains("Columns:"), "dense keeps section labels");
+        assert!(
+            dense.contains("id integer NOT NULL PRIMARY KEY SERIAL"),
+            "dense column line is single-spaced, no padding: {dense}"
+        );
+        // Empty sections are omitted entirely in dense mode.
+        assert!(
+            !dense.contains("(none)"),
+            "dense omits empty sections, not '(none)': {dense}"
+        );
+        assert!(!dense.contains("Indexes:"), "dense omits empty Indexes");
+        // No blank-line section separators.
+        assert!(
+            !dense.contains("\n\n"),
+            "dense has no blank-line separators: {dense:?}"
+        );
+    }
+
+    #[test]
+    fn pretty_keeps_empty_sections_and_padding() {
+        use crate::output::Density;
+        let table = columns_only_table();
+        let pretty = table.format(false, Density::Pretty);
+
+        // Pretty retains the labelled empty sections with their `(none)` marker.
+        assert!(pretty.contains("Indexes:"), "pretty keeps Indexes section");
+        assert!(pretty.contains("(none)"), "pretty marks empty sections");
+        assert!(
+            pretty.contains("\n\n"),
+            "pretty separates sections with blank lines"
+        );
+    }
+
+    #[test]
+    fn dense_dependents_omit_empty_subsections() {
+        use crate::output::Density;
+        let deps = Dependents {
+            foreign_keys: vec![ForeignKeyRef {
+                constraint_name: "orders_user_id_fkey".to_string(),
+                from_schema: "public".to_string(),
+                from_table: "orders".to_string(),
+                from_columns: vec!["user_id".to_string()],
+                to_schema: "public".to_string(),
+                to_table: "users".to_string(),
+                to_columns: vec!["id".to_string()],
+            }],
+            views: vec![],
+            triggers: vec![],
+        };
+
+        let dense = deps.format("public", "users", Density::Dense);
+        assert!(
+            dense.contains("Foreign Keys"),
+            "FK subsection kept (present)"
+        );
+        assert!(dense.contains("public.orders.user_id"), "FK row present");
+        assert!(
+            !dense.contains("Views:") && !dense.contains("Triggers:"),
+            "dense omits empty Views/Triggers subsections: {dense}"
+        );
+        // The summary line is always present.
+        assert!(dense.contains("1 objects depend on public.users"));
+
+        // Pretty keeps the empty subsections.
+        let pretty = deps.format("public", "users", Density::Pretty);
+        assert!(pretty.contains("Views:") && pretty.contains("Triggers:"));
     }
 }

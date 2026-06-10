@@ -28,7 +28,9 @@ can't hang forever, and output is dense and machine-readable.
   `--statement-timeout`, `--lock-timeout`). A bad query fails fast instead of
   pinning a backend.
 - **Structured output.** Add `--json` to query/diagnostic commands when the
-  result feeds further work. Human tables otherwise.
+  result feeds further work. Human tables otherwise — and those auto-densify
+  when output is piped or captured (no box-drawing or padding, same info, fewer
+  tokens); pass `--pretty` to force the decorated form.
 - **Semantic exit codes** — branch on them, don't parse text:
   - `0` healthy / success
   - `1` warning (non-critical finding)

@@ -281,8 +281,90 @@ pub async fn run_context(
     })
 }
 
-/// Print context in human-readable format
-pub fn print_human(result: &ContextResult) {
+/// Print context in human-readable format.
+///
+/// `Pretty` keeps the padded, blank-line-separated layout a person reads.
+/// `Dense` strips the blank lines and padding and folds extensions/roles onto
+/// single lines — same fields, far fewer tokens for an agent capturing it.
+pub fn print_human(result: &ContextResult, density: crate::output::Density) {
+    if density.is_dense() {
+        print_dense(result);
+    } else {
+        print_pretty(result);
+    }
+}
+
+fn yes_no(b: bool) -> &'static str {
+    if b {
+        "yes"
+    } else {
+        "no"
+    }
+}
+
+fn print_dense(result: &ContextResult) {
+    let ctx = &result.context;
+
+    println!(
+        "CONNECTION: {}@{}:{}/{} ({})",
+        ctx.target.user,
+        ctx.target.host,
+        ctx.target.port,
+        ctx.target.database,
+        if ctx.target.readonly {
+            "read-only"
+        } else {
+            "read-write"
+        }
+    );
+
+    let recovery = if ctx.server.in_recovery {
+        "replica"
+    } else {
+        "primary"
+    };
+    match ctx.server.data_directory {
+        Some(ref dir) => println!(
+            "SERVER: pg {} ({}) {} data_dir={}",
+            ctx.server.version_major, ctx.server.version_num, recovery, dir
+        ),
+        None => println!(
+            "SERVER: pg {} ({}) {}",
+            ctx.server.version_major, ctx.server.version_num, recovery
+        ),
+    }
+
+    let mut exts: Vec<_> = ctx.extensions.iter().collect();
+    exts.sort_by_key(|(name, _)| name.as_str());
+    let ext_list: Vec<String> = exts
+        .iter()
+        .map(|(name, version)| format!("{}={}", name, version))
+        .collect();
+    if ext_list.is_empty() {
+        println!("EXTENSIONS (0):");
+    } else {
+        println!(
+            "EXTENSIONS ({}): {}",
+            ctx.extensions.len(),
+            ext_list.join(" ")
+        );
+    }
+
+    println!(
+        "PRIVILEGES: superuser={} pg_stat_activity={} pg_cancel_backend={} pg_terminate={} pg_stat_statements={}",
+        yes_no(ctx.privileges.is_superuser),
+        yes_no(ctx.privileges.pg_stat_activity_select),
+        yes_no(ctx.privileges.pg_cancel_backend_execute),
+        yes_no(ctx.privileges.pg_terminate_backend_execute),
+        yes_no(ctx.privileges.pg_stat_statements_select),
+    );
+
+    if !ctx.privileges.roles.is_empty() {
+        println!("ROLES: {}", ctx.privileges.roles.join(" "));
+    }
+}
+
+fn print_pretty(result: &ContextResult) {
     let ctx = &result.context;
 
     println!("CONNECTION:");
