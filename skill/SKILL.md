@@ -89,6 +89,15 @@ single DML statement), then **rolls back** — nothing changes. Preview first,
 show the human the affected count/sample, then re-run with `--commit` to apply.
 `--commit` is the only flag that writes; you can't forget to preview.
 
+The statement executes **exactly once** under both flags. A dry run is a real
+trial run, so a statement that *can't* succeed (unique/constraint violation,
+type error) **fails the preview** — exit `10` with `ROLLED BACK — nothing
+changed`, not a clean `DRY RUN` report. That's a feature: the preview tells you
+the write would have failed before you reach `--commit`. Likewise a `--commit`
+whose statement aborts is reported honestly — exit `10`, `ROLLED BACK`, never a
+false `COMMITTED` — including deferred-constraint violations that only surface at
+commit time.
+
 Writes that hide inside a query are caught, not just bare `INSERT`/`UPDATE`/
 `DELETE`: writable CTEs (`WITH d AS (DELETE … RETURNING *) SELECT * FROM d`),
 leading-CTE DML, `SELECT … INTO new_table`, and `EXPLAIN ANALYZE <write>` (which

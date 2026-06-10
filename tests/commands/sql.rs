@@ -501,6 +501,357 @@ fn test_sql_select_into_dry_runs() {
 }
 
 // ============================================================================
+// PGC-104: exactly-once execution + honest abort reporting
+//
+// These probes use NON-IDEMPOTENT statements (INSERT against a UNIQUE
+// constraint). The original bug double-executed single-DML writes — once for
+// the count, once for the RETURNING-wrapped sample — and swallowed the abort
+// that the second execution triggered, reporting COMMITTED with zero rows
+// written. An UPDATE masks this (idempotent under re-execution); an INSERT
+// against a unique index does not.
+// ============================================================================
+
+/// `--commit` of a single INSERT must execute the statement EXACTLY ONCE. The
+/// double-execution bug inserted two rows for `INSERT … SELECT 1`; here a
+/// single-value insert into a unique column must leave exactly one row.
+#[test]
+fn test_sql_commit_inserts_exactly_once() {
+    skip_if_no_db!();
+    let db = TestDatabase::new();
+    let project = TestProject::from_fixture("with_migrations", &db);
+    project.run_pgcrate_ok(&["migrate", "up"]);
+
+    let output = project.run_pgcrate_ok(&[
+        "sql",
+        "-c",
+        "INSERT INTO users (email, name) SELECT 'once@test.com', 'Once'",
+        "--commit",
+    ]);
+    assert!(
+        stdout(&output).to_uppercase().contains("COMMITTED"),
+        "commit should be announced: {}",
+        stdout(&output)
+    );
+
+    // Exactly one row — double execution would have inserted two (or aborted on
+    // the unique violation and falsely reported COMMITTED).
+    assert_eq!(
+        db.query("SELECT count(*) FROM users WHERE email = 'once@test.com'"),
+        "1",
+        "single INSERT --commit must insert exactly one row"
+    );
+}
+
+/// The headline failure: a `--commit` write whose second (phantom) execution
+/// hit a unique violation used to report `COMMITTED` while the transaction had
+/// silently rolled back. Now any abort must propagate: exit 10, an explicit
+/// "ROLLED BACK" message, never COMMITTED, and the table left untouched.
+///
+/// Reproduced here by inserting a row that already exists, so the very first
+/// (and only) execution violates the unique constraint.
+#[test]
+fn test_sql_commit_aborted_write_reports_failure_not_committed() {
+    skip_if_no_db!();
+    let db = TestDatabase::new();
+    let project = TestProject::from_fixture("with_migrations", &db);
+    project.run_pgcrate_ok(&["migrate", "up"]);
+    db.run_sql_ok("INSERT INTO users (email, name) VALUES ('dup@test.com', 'Existing')");
+
+    let output = project.run_pgcrate(&[
+        "sql",
+        "-c",
+        "INSERT INTO users (email, name) VALUES ('dup@test.com', 'Phantom')",
+        "--commit",
+    ]);
+
+    // Exit 10 (operational failure), not 0.
+    assert_eq!(
+        output.status.code(),
+        Some(10),
+        "aborted commit must exit 10: stdout={}, stderr={}",
+        stdout(&output),
+        stderr(&output)
+    );
+    let combined = format!("{}{}", stdout(&output), stderr(&output));
+    assert!(
+        combined.to_uppercase().contains("ROLLED BACK"),
+        "must announce ROLLED BACK: {}",
+        combined
+    );
+    assert!(
+        !combined.to_uppercase().contains("COMMITTED"),
+        "must NEVER report COMMITTED on an aborted write: {}",
+        combined
+    );
+
+    // The phantom row was never written and the original survives unchanged.
+    assert_eq!(
+        db.query("SELECT count(*) FROM users WHERE email = 'dup@test.com'"),
+        "1",
+        "aborted commit must leave the table unchanged"
+    );
+    assert_eq!(
+        db.query("SELECT name FROM users WHERE email = 'dup@test.com'"),
+        "Existing",
+        "the pre-existing row must be untouched"
+    );
+}
+
+/// The aborted-commit failure surfaces in JSON too: ok=false, exit 10, the
+/// error message mentions the rollback, and there is no committed=true outcome.
+#[test]
+fn test_sql_commit_aborted_write_json_reports_failure() {
+    skip_if_no_db!();
+    let db = TestDatabase::new();
+    let project = TestProject::from_fixture("with_migrations", &db);
+    project.run_pgcrate_ok(&["migrate", "up"]);
+    db.run_sql_ok("INSERT INTO users (email, name) VALUES ('dupj@test.com', 'Existing')");
+
+    let output = project.run_pgcrate(&[
+        "sql",
+        "-c",
+        "INSERT INTO users (email, name) VALUES ('dupj@test.com', 'Phantom')",
+        "--commit",
+        "--json",
+    ]);
+    assert_eq!(
+        output.status.code(),
+        Some(10),
+        "aborted commit (json) must exit 10: {}",
+        stdout(&output)
+    );
+
+    let json = parse_json(&output);
+    assert_eq!(
+        json.get("ok").and_then(|v| v.as_bool()),
+        Some(false),
+        "json must report ok=false on an aborted write: {}",
+        json
+    );
+    let blob = serde_json::to_string(&json).unwrap().to_uppercase();
+    assert!(
+        blob.contains("ROLLED BACK"),
+        "json error must mention ROLLED BACK: {}",
+        json
+    );
+
+    assert_eq!(
+        db.query("SELECT count(*) FROM users WHERE email = 'dupj@test.com'"),
+        "1",
+        "aborted commit must leave the table unchanged"
+    );
+}
+
+/// A `--commit` insert that affects MANY rows must still execute once and
+/// commit exactly that many — the count comes from the same single execution as
+/// the sample, not a separate pass. Mirrors the solitaire repro shape (a bulk
+/// `INSERT … SELECT` into a uniquely-indexed table).
+#[test]
+fn test_sql_commit_bulk_insert_executes_once() {
+    skip_if_no_db!();
+    let db = TestDatabase::new();
+    let project = TestProject::from_fixture("with_migrations", &db);
+    project.run_pgcrate_ok(&["migrate", "up"]);
+
+    // 50 unique emails in one INSERT … SELECT.
+    let output = project.run_pgcrate_ok(&[
+        "sql",
+        "-c",
+        "INSERT INTO users (email, name) \
+         SELECT 'bulk' || g || '@test.com', 'B' FROM generate_series(1, 50) g",
+        "--commit",
+    ]);
+    assert!(
+        stdout(&output).contains("50 row(s) affected"),
+        "commit should report 50 rows affected: {}",
+        stdout(&output)
+    );
+
+    // Exactly 50 rows — a double execution would have hit the unique constraint
+    // on the second pass and aborted (which must now report failure, not 100
+    // rows or a false COMMITTED).
+    assert_eq!(
+        db.query("SELECT count(*) FROM users WHERE email LIKE 'bulk%@test.com'"),
+        "50",
+        "bulk INSERT --commit must insert exactly 50 rows, once"
+    );
+}
+
+/// The dry-run (`--allow-write`) path must also execute the statement once and
+/// roll back. A single INSERT previewed under --allow-write must report the
+/// would-be effect and leave the table empty.
+#[test]
+fn test_sql_dry_run_insert_executes_once_and_rolls_back() {
+    skip_if_no_db!();
+    let db = TestDatabase::new();
+    let project = TestProject::from_fixture("with_migrations", &db);
+    project.run_pgcrate_ok(&["migrate", "up"]);
+
+    let output = project.run_pgcrate_ok(&[
+        "sql",
+        "-c",
+        "INSERT INTO users (email, name) VALUES ('preview@test.com', 'Preview')",
+        "--allow-write",
+    ]);
+    let out = stdout(&output);
+    assert!(
+        out.to_uppercase().contains("DRY RUN"),
+        "dry run should be announced: {}",
+        out
+    );
+    assert!(
+        out.contains("1 row(s) would be affected"),
+        "dry run should report one would-be row: {}",
+        out
+    );
+
+    // Rolled back — nothing persisted.
+    assert_eq!(
+        db.query("SELECT count(*) FROM users WHERE email = 'preview@test.com'"),
+        "0",
+        "dry-run INSERT must roll back (no row persisted)"
+    );
+}
+
+/// A single INSERT (no RETURNING) under --allow-write must still surface a
+/// sample of the would-be-affected rows in JSON, derived from the SAME single
+/// execution that produced the count (not a second wrapped run).
+#[test]
+fn test_sql_dry_run_insert_json_sample_from_single_exec() {
+    skip_if_no_db!();
+    let db = TestDatabase::new();
+    let project = TestProject::from_fixture("with_migrations", &db);
+    project.run_pgcrate_ok(&["migrate", "up"]);
+
+    let output = project.run_pgcrate(&[
+        "sql",
+        "-c",
+        "INSERT INTO users (email, name) VALUES ('sample@test.com', 'Sampled')",
+        "--allow-write",
+        "--json",
+    ]);
+    assert!(output.status.success(), "dry-run JSON should succeed");
+
+    let json = parse_json(&output);
+    let write = json.get("write").expect("write outcome present");
+    assert_eq!(
+        write.get("committed").and_then(|v| v.as_bool()),
+        Some(false),
+        "dry run must report committed=false: {}",
+        json
+    );
+    assert_eq!(
+        write.get("rows_affected").and_then(|v| v.as_u64()),
+        Some(1),
+        "dry run must report rows_affected=1: {}",
+        json
+    );
+
+    // The sample carries the would-be values (email + name).
+    let has_sample = json
+        .get("results")
+        .and_then(|r| r.as_array())
+        .map(|arr| {
+            arr.iter().any(|r| {
+                r.get("type").and_then(|t| t.as_str()) == Some("sample")
+                    && serde_json::to_string(r)
+                        .unwrap()
+                        .contains("sample@test.com")
+            })
+        })
+        .unwrap_or(false);
+    assert!(
+        has_sample,
+        "dry-run INSERT should include a sample row with the inserted values: {}",
+        json
+    );
+
+    // And nothing was persisted.
+    assert_eq!(
+        db.query("SELECT count(*) FROM users WHERE email = 'sample@test.com'"),
+        "0",
+        "dry-run INSERT must not persist"
+    );
+}
+
+/// A DML statement that carries its OWN RETURNING goes through the plain
+/// single-execution path (no CTE wrap). It too must execute exactly once and
+/// report honestly under --commit.
+#[test]
+fn test_sql_commit_insert_with_returning_executes_once() {
+    skip_if_no_db!();
+    let db = TestDatabase::new();
+    let project = TestProject::from_fixture("with_migrations", &db);
+    project.run_pgcrate_ok(&["migrate", "up"]);
+
+    let output = project.run_pgcrate_ok(&[
+        "sql",
+        "-c",
+        "INSERT INTO users (email, name) VALUES ('ret@test.com', 'Ret') RETURNING id",
+        "--commit",
+    ]);
+    assert!(
+        stdout(&output).to_uppercase().contains("COMMITTED"),
+        "commit should be announced: {}",
+        stdout(&output)
+    );
+    assert_eq!(
+        db.query("SELECT count(*) FROM users WHERE email = 'ret@test.com'"),
+        "1",
+        "INSERT … RETURNING --commit must insert exactly one row"
+    );
+}
+
+/// The dry-run sample must present columns in the statement's natural order
+/// (table-definition order for `INSERT … RETURNING *`), not alphabetized. The
+/// CTE wrap derives the sample from `row_to_json` (order-preserving text JSON)
+/// plus an explicit column-name array; a regression to `to_jsonb`/sorted-map
+/// key inference would scramble this to `email, id, is_admin, name`.
+#[test]
+fn test_sql_dry_run_sample_preserves_column_order() {
+    skip_if_no_db!();
+    let db = TestDatabase::new();
+    let project = TestProject::from_fixture("with_migrations", &db);
+    project.run_pgcrate_ok(&["migrate", "up"]);
+
+    let output = project.run_pgcrate(&[
+        "sql",
+        "-c",
+        "INSERT INTO users (email, name, is_admin) VALUES ('order@test.com', 'Ord', true)",
+        "--allow-write",
+        "--json",
+    ]);
+    assert!(output.status.success(), "dry-run JSON should succeed");
+
+    let json = parse_json(&output);
+    let sample = json
+        .get("results")
+        .and_then(|r| r.as_array())
+        .and_then(|arr| {
+            arr.iter()
+                .find(|r| r.get("type").and_then(|t| t.as_str()) == Some("sample"))
+        })
+        .expect("sample result present");
+
+    let columns: Vec<&str> = sample
+        .get("columns")
+        .and_then(|c| c.as_array())
+        .expect("sample columns present")
+        .iter()
+        .map(|c| c.as_str().unwrap())
+        .collect();
+
+    // users is defined as (id, email, name, is_admin, created_at); RETURNING *
+    // yields that exact order — not the alphabetical email/id/is_admin/name.
+    assert_eq!(
+        columns,
+        vec!["id", "email", "name", "is_admin", "created_at"],
+        "sample columns must follow table-definition order: {}",
+        json
+    );
+}
+
+// ============================================================================
 // Row caps
 // ============================================================================
 
