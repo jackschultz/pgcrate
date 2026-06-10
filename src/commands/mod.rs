@@ -33,6 +33,7 @@ pub mod stats_age;
 pub mod storage;
 pub mod triage;
 pub mod vacuum;
+pub mod wal;
 pub mod xid;
 
 // Re-export snapshot commands from new module

@@ -438,6 +438,7 @@ pub mod schema {
     pub const CHECKPOINTS: &str = "pgcrate.diagnostics.checkpoints";
     pub const AUTOVACUUM_PROGRESS: &str = "pgcrate.diagnostics.autovacuum_progress";
     pub const CONFIG: &str = "pgcrate.diagnostics.config";
+    pub const WAL: &str = "pgcrate.diagnostics.wal";
 }
 
 // =============================================================================

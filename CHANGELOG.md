@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.6.0
+
+**WAL Monitoring**
+
+### New Commands
+
+- **`pgcrate dba wal`**: Monitor WAL generation, archiving, and disk consumption
+  - WAL configuration: `wal_level`, segment size, current LSN
+  - WAL directory size and segment count (via `pg_ls_waldir()`; requires `pg_monitor` or superuser)
+  - Archiving status: mode, command, last archived/failed WAL, failed count, pending file count
+  - Generation rate estimated from `pg_stat_wal` (PostgreSQL 14+)
+  - Issue detection with severity: oversized WAL directory, archive failures, archive lag, `wal_level=minimal`, archiving disabled
+  - Exit codes: 0 healthy, 1 warning, 2 critical
+  - Full JSON support with `pgcrate.diagnostics.wal` schema
+
+### Improvements
+
+- **`pgcrate inspect capabilities`**: Reports the `diagnostics.wal` capability
+  - Checks `pg_stat_archiver` SELECT and `pg_ls_waldir()` access
+  - Degrades gracefully when `pg_ls_waldir()` is unavailable (directory size and pending file counts omitted)
+
+---
+
 ## v0.5.0
 
 **Query Analysis and Index Remediation**

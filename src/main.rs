@@ -848,6 +848,8 @@ enum DbaCommands {
     AutovacuumProgress,
     /// Review PostgreSQL configuration settings
     Config,
+    /// Monitor WAL generation, archiving, and disk consumption
+    Wal,
 }
 
 /// Schema and permission inspection commands
@@ -2004,6 +2006,22 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                         false, // Never critical
                         result.has_suggestions,
                     ) {
+                        std::process::exit(code);
+                    }
+                }
+                DbaCommands::Wal => {
+                    let result = commands::wal::get_wal(client).await?;
+
+                    if cli.json {
+                        commands::wal::print_json(&result, timeouts)?;
+                    } else {
+                        commands::wal::print_human(&result, cli.quiet);
+                    }
+
+                    // Exit code based on overall status
+                    let is_critical = result.overall_status == commands::wal::WalStatus::Critical;
+                    let is_warning = result.overall_status == commands::wal::WalStatus::Warning;
+                    if let Some(code) = exit_codes::for_finding(cli.json, is_critical, is_warning) {
                         std::process::exit(code);
                     }
                 }

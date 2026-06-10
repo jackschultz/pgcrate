@@ -6,3 +6,4 @@ mod locks;
 mod maintenance;
 mod replication;
 mod sequences_scenarios;
+mod wal;
