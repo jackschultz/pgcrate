@@ -306,6 +306,13 @@ enum Commands {
         #[arg(long)]
         full: bool,
     },
+
+    // ===== Agent Integration =====
+    /// Show or install the pgcrate agent skill (Claude Code SKILL.md)
+    Skill {
+        #[command(subcommand)]
+        command: SkillCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -518,6 +525,22 @@ enum DbCommands {
         /// Confirm you want to drop the database
         #[arg(long)]
         yes: bool,
+    },
+}
+
+/// Agent skill commands
+#[derive(Subcommand)]
+enum SkillCommands {
+    /// Print the embedded SKILL.md to stdout
+    Show,
+    /// Install the skill to a Claude Code skills directory
+    Install {
+        /// Destination directory (default: ~/.claude/skills/pgcrate)
+        #[arg(long, value_name = "DIR")]
+        path: Option<PathBuf>,
+        /// Overwrite an existing SKILL.md even if it was modified locally
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -2308,6 +2331,12 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
 
             commands::reset(&database_url, &config, cli.quiet, cli.verbose, yes, full).await?;
         }
+        Commands::Skill { command } => match command {
+            SkillCommands::Show => commands::skill::show(),
+            SkillCommands::Install { path, force } => {
+                commands::skill::install(path.as_deref(), force, cli.quiet)?;
+            }
+        },
         Commands::Anonymize { command } => {
             let config =
                 Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
@@ -2456,6 +2485,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 | Commands::Anonymize { .. }
                 | Commands::Seed { .. }
                 | Commands::Bootstrap { .. }
+                | Commands::Skill { .. }
                 | Commands::Status => unreachable!(),
             }
         }

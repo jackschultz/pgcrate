@@ -27,6 +27,7 @@ mod role;
 mod schema;
 mod seed;
 pub mod sequences;
+pub mod skill;
 mod snapshot;
 mod sql_cmd;
 pub mod stats_age;
