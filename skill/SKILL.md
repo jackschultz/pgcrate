@@ -45,6 +45,7 @@ exhaustive reference; this skill is the *when/why*, that flag is the *what*.
 ## Session start — orient before you act
 
 ```bash
+pgcrate brief            # whole DB in one screen: schemas → tables → est. rows, FKs, migrations, hazards
 pgcrate context          # connection, server version, extensions, privileges, read/write mode
 pgcrate capabilities     # what you're actually allowed to do here
 pgcrate inspect table <schema.name>   # columns, indexes, constraints, stats
@@ -53,9 +54,20 @@ pgcrate inspect roles            # roles/users; add --describe <name> for one
 pgcrate inspect extensions       # installed extensions (--available for the rest)
 ```
 
-Run `context` first on an unfamiliar database — it tells you the PG version,
-whether you're on a replica, and whether you even have permission for the
-diagnostics below. (A one-shot `brief` summary command is coming; not available yet.)
+**Run `brief` first on an unfamiliar database.** It's the one command that
+orients you in a single shot: which instance you're on (db/host/port/user/mode —
+check this before you touch anything; the worst mistake is the right query on the
+wrong instance), every non-system schema with its tables and *estimated* row
+counts (`reltuples`, never `count(*)` — so it's sub-second and never scans), the
+foreign-key graph in compact `child → parents` form, migration state (applied N /
+pending M) when a `pgcrate.toml` resolves, installed extensions + server version,
+and any cheap at-a-glance hazards (sequence exhaustion, XID age). It's catalog-only
+and read-only; health flags are *shown, not scored* (it always exits `0` — for a
+scored health pass use `dba triage`). `--json` gives the full, uncapped structure
+(`schema_id: pgcrate.brief`); human output caps long schemas to the largest tables.
+
+`context` drills into the connection/server/privilege detail when you need it
+(e.g. confirming you have permission for the diagnostics below).
 
 ## Querying
 
@@ -217,6 +229,7 @@ Every `fix` supports `--dry-run` (preview) and `--verify` (re-check after). Run
 
 | Goal | Command |
 |------|---------|
+| Orient on an unfamiliar DB (run first) | `pgcrate brief` |
 | Connection + server + privileges | `pgcrate context` |
 | What I'm allowed to do | `pgcrate capabilities` |
 | Describe a table | `pgcrate inspect table <name>` |

@@ -6,6 +6,7 @@ mod anonymize;
 pub mod autovacuum_progress;
 pub mod bloat;
 mod bootstrap;
+pub mod brief;
 pub mod cache;
 pub mod capabilities;
 pub mod checkpoints;
