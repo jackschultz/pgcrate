@@ -72,6 +72,7 @@ fn json_supported(command: &Commands) -> bool {
         // Inspect commands all support JSON
         Commands::Inspect { .. } => true,
         // Operations
+        Commands::Brief => true,
         Commands::Context => true,
         Commands::Capabilities => true,
         Commands::Sql { .. } => true,
@@ -261,6 +262,9 @@ enum Commands {
     },
 
     // ===== Operations =====
+    /// Orient on an unfamiliar database: schemas, tables, rows, relationships,
+    /// migrations, and at-a-glance hazards — the whole DB in one screen.
+    Brief,
     /// Show connection context, server info, extensions, and privileges
     Context,
     /// Show available capabilities based on privileges and connection mode
@@ -2153,6 +2157,46 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 }
             }
         }
+        Commands::Brief => {
+            let config =
+                Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
+            let conn_result = connection::resolve_and_validate(
+                &config,
+                cli.database_url.as_deref(),
+                cli.connection.as_deref(),
+                cli.env_var.as_deref(),
+                cli.allow_primary,
+                cli.read_write,
+                cli.quiet,
+            )?;
+
+            // Use DiagnosticSession with timeout enforcement
+            let timeout_config = parse_timeout_config(&cli)?;
+            let session = DiagnosticSession::connect(&conn_result.url, timeout_config).await?;
+
+            // Set up Ctrl+C handler to cancel queries gracefully
+            setup_ctrlc_handler(session.cancel_token());
+
+            // Show effective timeouts unless quiet
+            if !cli.quiet && !cli.json {
+                eprintln!("pgcrate: timeouts: {}", session.effective_timeouts());
+            }
+
+            let result = commands::brief::run_brief(
+                session.client(),
+                &conn_result.url,
+                !cli.read_write, // read_only is the inverse of read_write flag
+                cli.no_redact,
+                &config,
+            )
+            .await?;
+
+            if cli.json {
+                commands::brief::print_json(&result, Some(session.effective_timeouts()))?;
+            } else {
+                commands::brief::print_human(&result, output.density());
+            }
+        }
         Commands::Context => {
             let config =
                 Config::load(cli.config_path.as_deref()).context("Failed to load configuration")?;
@@ -2509,6 +2553,7 @@ async fn run(cli: Cli, output: &Output) -> Result<()> {
                 | Commands::Init { .. }
                 | Commands::Dba { .. }
                 | Commands::Inspect { .. }
+                | Commands::Brief
                 | Commands::Context
                 | Commands::Capabilities
                 | Commands::Sql { .. }
