@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.7.0
+
+**The Agent Wedge** — pgcrate repositioned as the Postgres interface for agents: context, guarded execution, and a skill that teaches the workflows.
+
+### New Commands
+
+- **`pgcrate brief`**: whole database in one dense screen — connection target, all schemas with tables and estimated rows, FK relationships, migration status (when project config resolves), extensions, catalog-cheap health flags. ~20ms typical; read-only guaranteed (never creates bookkeeping on the target).
+- **`pgcrate skill`**: `show` prints and `install` writes the bundled Claude Code skill (`~/.claude/skills/pgcrate/SKILL.md`) — workflow-organized agent guidance, refuses to clobber local edits without `--force`.
+
+### Guarded SQL gateway
+
+- Writes through `sql` are **dry-run by default**: `--allow-write` previews (transaction → affected count + sample rows → rollback); only `--commit` applies. Hidden writes are caught: writable CTEs, leading-CTE DML, `SELECT … INTO`, `EXPLAIN ANALYZE <write>`.
+- Every write executes **exactly once**, and aborted transactions report honestly (`ROLLED BACK — nothing changed`, exit 10) — including deferred constraint violations (`SET CONSTRAINTS ALL IMMEDIATE` before commit).
+- EXPLAIN cost gating before writes (`[sql] cost_warn_threshold`, default 50k; structured `write.cost` in JSON), row caps on reads (default 1000, `--limit`), and statement/lock/connect timeouts now enforced on the `sql` path.
+
+### Output density
+
+- Human output auto-densifies when piped or captured (no box-drawing/padding, same information, 18–37% fewer bytes); `--pretty`/`--dense` override TTY detection. `--json` unchanged.
+
 ## v0.6.0
 
 **WAL Monitoring**
